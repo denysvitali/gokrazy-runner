@@ -57,6 +57,7 @@ go 1.26
 replace github.com/denysvitali/gokrazy-runner => $REPO_DIR
 EOF
 
+# shellcheck disable=SC2154 # gok_packages comes from gok-common.sh
 for pkg in "${gok_packages[@]}"; do
   gok -i "$GOKRAZY_INSTANCE" add "$pkg"
 done

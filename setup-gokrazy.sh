@@ -50,6 +50,7 @@ replace github.com/denysvitali/gokrazy-runner => $ABSOLUTE_PROJECT_PATH
 EOF
 
 echo "Adding packages..."
+# shellcheck disable=SC2154 # gok_packages comes from gok-common.sh
 for pkg in "${gok_packages[@]}"; do
   gok -i "$INSTANCE_NAME" add "$pkg"
 done
