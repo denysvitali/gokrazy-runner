@@ -1,0 +1,17 @@
+# Shared Gokrazy package list for setup-gokrazy.sh and scripts/build-ota-image.sh.
+# One package per line. Lines starting with '#' and blank lines are ignored.
+# Keep this list in sync between local SD card setups and OTA image builds.
+
+# Core gokrazy services
+github.com/gokrazy/fbstatus
+github.com/gokrazy/serial-busybox
+github.com/gokrazy/breakglass
+
+# podman + container networking (per gokrazy.org/packages/docker-containers)
+github.com/gokrazy/podman
+github.com/gokrazy/iptables
+github.com/gokrazy/nsenter
+
+# Local services
+./cmd/perm-init
+./cmd/runner-init

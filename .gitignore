@@ -1,0 +1,19 @@
+# Build output
+/dist/
+/ota/
+/gokrazy/
+*.img
+*.img.gz
+*.squashfs
+*.squashfs.gz
+
+# Go
+*.test
+*.out
+coverage.*
+
+# Editor
+.idea/
+.vscode/
+*.swp
+.DS_Store

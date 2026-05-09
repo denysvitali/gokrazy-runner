@@ -1,0 +1,175 @@
+name: ota-image
+
+concurrency:
+  group: ota-image-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  test:
+    name: vet + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - run: go vet ./...
+      - run: go test -short ./...
+
+  build-and-publish:
+    name: build flash + OTA image
+    needs: test
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    env:
+      GOKRAZY_INSTANCE: gokrazy-runner
+      GOKRAZY_PARENT_DIR: ${{ github.workspace }}/gokrazy
+      GOKRAZY_TOOLS_REF: latest
+      IMAGE_NAME_FULL: gokrazy-runner-rpi4b.img
+      IMAGE_NAME_OTA: gokrazy-runner-rpi4b-root.squashfs
+      TARGET_STORAGE_BYTES: "2147483648"  # 2 GiB
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache gokrazy CLI
+        id: cache-gok
+        uses: actions/cache@v5
+        with:
+          path: ~/go/bin/gok
+          key: ${{ runner.os }}-${{ runner.arch }}-gokrazy-gok-${{ env.GOKRAZY_TOOLS_REF }}-v1
+
+      - name: Install gokrazy CLI
+        if: steps.cache-gok.outputs.cache-hit != 'true'
+        run: go install github.com/gokrazy/tools/cmd/gok@${{ env.GOKRAZY_TOOLS_REF }}
+
+      - name: Add Go bin to PATH
+        run: echo "PATH=$PATH:$(go env GOPATH)/bin" >> "$GITHUB_ENV"
+
+      - name: Cache static arm64 mke2fs
+        id: cache-e2fsprogs
+        uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}/dist/e2fsprogs-arm64/mke2fs
+          key: ${{ runner.os }}-${{ runner.arch }}-e2fsprogs-arm64-${{ hashFiles('.github/scripts/build-mke2fs-arm64.sh') }}-v1
+
+      - name: Build static arm64 mke2fs
+        if: steps.cache-e2fsprogs.outputs.cache-hit != 'true'
+        run: bash .github/scripts/build-mke2fs-arm64.sh
+
+      - name: Resolve static arm64 mke2fs
+        id: e2fsprogs
+        shell: bash
+        run: |
+          mke2fs_binary="${{ github.workspace }}/dist/e2fsprogs-arm64/mke2fs"
+          if [ ! -x "$mke2fs_binary" ]; then
+            echo "::error::static arm64 mke2fs binary missing: $mke2fs_binary"
+            exit 1
+          fi
+          file "$mke2fs_binary"
+          if ! file "$mke2fs_binary" | grep -q 'ARM aarch64'; then
+            echo "::error::mke2fs is not arm64"
+            exit 1
+          fi
+          if ! file "$mke2fs_binary" | grep -q 'statically linked'; then
+            echo "::error::mke2fs is not statically linked"
+            exit 1
+          fi
+          echo "mke2fs_binary=$mke2fs_binary" >> "$GITHUB_OUTPUT"
+
+      - name: Build full flash image (.img)
+        id: build-full
+        env:
+          GOKRAZY_INSTANCE: ${{ env.GOKRAZY_INSTANCE }}
+          GOKRAZY_PARENT_DIR: ${{ env.GOKRAZY_PARENT_DIR }}
+          IMAGE_DIR: ${{ github.workspace }}/ota
+          IMAGE_NAME: ${{ env.IMAGE_NAME_FULL }}
+          GOKRAZY_IMAGE_MODE: full
+          TARGET_STORAGE_BYTES: ${{ env.TARGET_STORAGE_BYTES }}
+          MKE2FS_BINARY: ${{ steps.e2fsprogs.outputs.mke2fs_binary }}
+        run: bash scripts/build-ota-image.sh
+
+      - name: Build OTA root image (.squashfs)
+        id: build-ota
+        env:
+          GOKRAZY_INSTANCE: ${{ env.GOKRAZY_INSTANCE }}
+          GOKRAZY_PARENT_DIR: ${{ env.GOKRAZY_PARENT_DIR }}
+          IMAGE_DIR: ${{ github.workspace }}/ota
+          IMAGE_NAME: ${{ env.IMAGE_NAME_OTA }}
+          GOKRAZY_IMAGE_MODE: ota
+          MKE2FS_BINARY: ${{ steps.e2fsprogs.outputs.mke2fs_binary }}
+        run: bash scripts/build-ota-image.sh
+
+      - name: Compress full flash image
+        id: compress-full
+        run: |
+          out="${{ steps.build-full.outputs.image_path }}.gz"
+          gzip -9 -c "${{ steps.build-full.outputs.image_path }}" > "$out"
+          echo "compressed_path=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Compress OTA image
+        id: compress-ota
+        run: |
+          out="${{ steps.build-ota.outputs.image_path }}.gz"
+          gzip -9 -c "${{ steps.build-ota.outputs.image_path }}" > "$out"
+          echo "compressed_path=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Attest provenance (OTA squashfs)
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: ${{ steps.build-ota.outputs.image_path }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: gokrazy-runner-images
+          path: |
+            ${{ steps.build-full.outputs.image_path }}
+            ${{ steps.compress-full.outputs.compressed_path }}
+            ${{ steps.build-ota.outputs.image_path }}
+            ${{ steps.compress-ota.outputs.compressed_path }}
+          if-no-files-found: error
+
+      - name: Compute release tag
+        id: release-tag
+        run: |
+          if [[ "${GITHUB_REF}" == "refs/heads/master" ]]; then
+            echo "tag=master-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            echo "name=gokrazy-runner master-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "name=gokrazy-runner ${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish release
+        if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.release-tag.outputs.tag }}
+          name: ${{ steps.release-tag.outputs.name }}
+          prerelease: ${{ steps.release-tag.outputs.prerelease }}
+          generate_release_notes: true
+          files: |
+            ${{ steps.compress-full.outputs.compressed_path }}
+            ${{ steps.compress-ota.outputs.compressed_path }}
