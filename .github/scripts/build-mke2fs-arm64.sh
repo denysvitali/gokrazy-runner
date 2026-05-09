@@ -33,7 +33,7 @@ cd "$BUILD_DIR/e2fsprogs-${E2FSPROGS_VERSION}"
   --enable-static \
   --disable-nls \
   --disable-fuse2fs
-make -j"$(nproc)" LDFLAGS=-all-static
+make -j"$(nproc)" LDFLAGS=-static
 
 install -m 0755 misc/mke2fs "$OUTPUT_DIR/mke2fs"
 file "$OUTPUT_DIR/mke2fs"
