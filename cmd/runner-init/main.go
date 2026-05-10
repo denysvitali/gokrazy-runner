@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -144,6 +145,10 @@ func runOnce(ctx context.Context) error {
 
 	if err := pullImage(ctx, cfg.Image); err != nil {
 		log.Printf("warning: pull %s failed (will try to run from local cache): %v", cfg.Image, err)
+	}
+
+	if err := populateRunnerHome(ctx, cfg.Image); err != nil {
+		return fmt.Errorf("populate %s from image: %w", dataDir, err)
 	}
 
 	args := buildPodmanArgs(cfg)
@@ -280,6 +285,32 @@ func redactArgs(args []string) []string {
 
 func pullImage(ctx context.Context, image string) error {
 	cmd := exec.CommandContext(ctx, podmanBinary, "pull", image)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// populateRunnerHome seeds /perm/runner-data with the runner binaries from
+// the image (config.sh, run.sh, bin/, externals/, ...). The main `podman run`
+// bind-mounts dataDir over /home/runner, which would otherwise shadow the
+// binaries baked into the image. We do a one-shot copy as root inside a
+// throwaway container; cp -a preserves the image's runner:runner ownership
+// (UID 1001), which lines up with the host because the container runs without
+// a user-namespace remap.
+func populateRunnerHome(ctx context.Context, image string) error {
+	if _, err := os.Stat(filepath.Join(dataDir, "config.sh")); err == nil {
+		return nil
+	}
+	log.Printf("seeding %s from %s (first boot)", dataDir, image)
+	args := []string{
+		"run", "--rm",
+		"--user=0:0",
+		"-v", dataDir + ":/runner-target",
+		"--entrypoint", "/bin/bash",
+		image,
+		"-c", "cp -a /home/runner/. /runner-target/",
+	}
+	cmd := exec.CommandContext(ctx, podmanBinary, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
