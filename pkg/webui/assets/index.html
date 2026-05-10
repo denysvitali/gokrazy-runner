@@ -150,8 +150,17 @@
 
     <section id="section-system" class="card">
       <h2>System</h2>
-      <button type="button" id="reboot-button" class="danger">Reboot Device</button>
+      <div class="system-actions">
+        <button type="button" id="reboot-button" class="danger">Reboot Device</button>
+        <button type="button" id="support-button" class="secondary">Copy support logs</button>
+        <button type="button" id="support-download" class="secondary">Download</button>
+      </div>
+      <p class="hint">Support logs include network state, container logs, recent kernel messages, and a redacted copy of <code>runner.env</code>. Tokens, passwords, and the Tailscale auth key are never included.</p>
       <p class="status" id="status-system" aria-live="polite"></p>
+      <details id="support-output-wrap" hidden>
+        <summary>Support log preview</summary>
+        <pre id="support-output" class="support-output"></pre>
+      </details>
     </section>
   </main>
 </body>

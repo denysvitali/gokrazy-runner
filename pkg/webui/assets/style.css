@@ -262,6 +262,27 @@ select:focus { border-color: var(--accent); }
 .ota-history li.ok { border-left-color: var(--ok); }
 .ota-history li.err { border-left-color: var(--err); }
 
+.system-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.support-output {
+  margin: 8px 0 0;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 @media (max-width: 480px) {
   .topbar { padding: 14px 12px 8px; }
   main { padding: 0 12px 32px; }

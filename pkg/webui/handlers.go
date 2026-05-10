@@ -27,6 +27,9 @@ type ServerConfig struct {
 	// OTAMgr handles GitHub-release-driven OTA updates. Optional; when nil
 	// the /api/ota/* endpoints return 503 Service Unavailable.
 	OTAMgr *ota.Manager
+	// Support overrides the diagnostics endpoint defaults. Zero values
+	// are filled in at request time.
+	Support SupportOptions
 }
 
 type Server struct {
@@ -70,6 +73,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.HandleFunc("/api/reboot", s.handleReboot)
 	mux.HandleFunc("/api/ota/status", s.handleOTAStatus)
 	mux.HandleFunc("/api/ota/install", s.handleOTAInstall)
+	mux.HandleFunc("/api/support", s.handleSupport)
 
 	s.handler = s.logMiddleware(s.authMiddleware(s.securityHeadersMiddleware(mux)))
 	return s, nil

@@ -252,6 +252,13 @@ point a browser at `https://<device>:8443/`.
   been written, whether `/perm/runner-data` is populated, the binary
   version, and whether the password is still the literal default —
   handy for a smoke check after first boot.
+- **Support logs** (`GET /api/support`): returns a single text/plain
+  diagnostics bundle (network state, `/etc/resolv.conf`, container logs,
+  recent kernel messages, redacted `runner.env`, `tailscale status`, …).
+  The **System** card has a *Copy support logs* / *Download* button that
+  fetches it. Tokens, passwords, and the Tailscale auth key are never
+  included; sensitive-looking env values (`*_TOKEN`, `*_KEY`, …) are
+  replaced with `**redacted (N bytes)**` before being shown.
 - **Software update**: the **Software Update** card lists every GitHub
   release that ships an OTA squashfs and lets you install one with a
   single click. The selected release is downloaded (gzipped squashfs),

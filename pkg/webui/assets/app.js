@@ -209,6 +209,9 @@ function bindForms() {
     }
   });
 
+  qs("#support-button").addEventListener("click", () => collectSupport({ copy: true }));
+  qs("#support-download").addEventListener("click", () => collectSupport({ download: true }));
+
   qs("#reboot-button").addEventListener("click", async () => {
     if (!window.confirm("Reboot the device now?")) return;
     const status = qs("#status-system");
@@ -452,6 +455,68 @@ function bindOtaForm() {
       setStatus(status, err.message || "Failed to start update", "err");
     }
   });
+}
+
+async function collectSupport({ copy = false, download = false } = {}) {
+  const status = qs("#status-system");
+  setStatus(status, "Collecting support logs…", "info");
+  let text;
+  try {
+    const resp = await fetch("/api/support", { headers: { Accept: "text/plain" } });
+    if (!resp.ok) {
+      throw new Error((await resp.text()) || `HTTP ${resp.status}`);
+    }
+    text = await resp.text();
+  } catch (err) {
+    setStatus(status, err.message || "Failed to collect support logs", "err");
+    return;
+  }
+
+  const wrap = qs("#support-output-wrap");
+  const pre = qs("#support-output");
+  pre.textContent = text;
+  wrap.hidden = false;
+  wrap.open = true;
+
+  if (download) {
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    a.download = `gokrazy-runner-support-${stamp}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setStatus(status, "Support logs downloaded.", "ok");
+    return;
+  }
+
+  if (copy) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        setStatus(status, "Support logs copied to clipboard.", "ok");
+        return;
+      }
+    } catch (err) {
+      // fall through to manual-copy hint
+    }
+    const range = document.createRange();
+    range.selectNodeContents(pre);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    setStatus(
+      status,
+      "Clipboard unavailable. The text is selected — press Ctrl/Cmd+C to copy.",
+      "info",
+    );
+    return;
+  }
+
+  setStatus(status, "Support logs ready.", "ok");
 }
 
 document.addEventListener("DOMContentLoaded", () => {
