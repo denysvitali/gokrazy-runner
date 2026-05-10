@@ -65,6 +65,20 @@ jobs:
       - name: Add Go bin to PATH
         run: echo "PATH=$PATH:$(go env GOPATH)/bin" >> "$GITHUB_ENV"
 
+      - name: Compute release tag
+        id: release-tag
+        run: |
+          if [[ "${GITHUB_REF}" == "refs/heads/master" ]]; then
+            tag="$(date -u +'%Y.%-m.%-d.%H%M')"
+            echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+            echo "name=gokrazy-runner ${tag}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "name=gokrazy-runner ${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Cache static arm64 mke2fs
         id: cache-e2fsprogs
         uses: actions/cache@v5
@@ -106,6 +120,7 @@ jobs:
           GOKRAZY_IMAGE_MODE: full
           TARGET_STORAGE_BYTES: ${{ env.TARGET_STORAGE_BYTES }}
           MKE2FS_BINARY: ${{ steps.e2fsprogs.outputs.mke2fs_binary }}
+          VERSION: ${{ steps.release-tag.outputs.tag }}
         run: bash scripts/build-ota-image.sh
 
       - name: Build OTA root image (.squashfs)
@@ -117,6 +132,7 @@ jobs:
           IMAGE_NAME: ${{ env.IMAGE_NAME_OTA }}
           GOKRAZY_IMAGE_MODE: ota
           MKE2FS_BINARY: ${{ steps.e2fsprogs.outputs.mke2fs_binary }}
+          VERSION: ${{ steps.release-tag.outputs.tag }}
         run: bash scripts/build-ota-image.sh
 
       - name: Compress full flash image
@@ -148,19 +164,6 @@ jobs:
             ${{ steps.build-ota.outputs.image_path }}
             ${{ steps.compress-ota.outputs.compressed_path }}
           if-no-files-found: error
-
-      - name: Compute release tag
-        id: release-tag
-        run: |
-          if [[ "${GITHUB_REF}" == "refs/heads/master" ]]; then
-            echo "tag=master-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-            echo "name=gokrazy-runner master-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-            echo "name=gokrazy-runner ${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Publish release
         if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')

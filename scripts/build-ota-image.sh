@@ -23,8 +23,8 @@ if [ -n "${VERSION:-}" ]; then
   BUILD_VERSION="$VERSION"
 elif [ -n "${TAG_NAME:-}" ]; then
   BUILD_VERSION="$TAG_NAME"
-elif [ "${GITHUB_REF:-}" = "refs/heads/master" ] && [ -n "${GITHUB_SHA:-}" ]; then
-  BUILD_VERSION="master-${GITHUB_SHA}"
+elif [ "${GITHUB_REF:-}" = "refs/heads/master" ]; then
+  BUILD_VERSION="$(date -u +'%Y.%-m.%-d.%H%M')"
 elif [[ "${GITHUB_REF:-}" == refs/tags/* ]] && [ -n "${GITHUB_REF_NAME:-}" ]; then
   BUILD_VERSION="$GITHUB_REF_NAME"
 else
