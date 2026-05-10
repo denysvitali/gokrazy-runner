@@ -90,7 +90,18 @@ func GrowPermPartition(blockDev string) (GrowOutcome, error) {
 	perm.End = maxEnd
 	perm.Size = (perm.End - perm.Start + 1) * sectorSize
 
-	if err := disk.Partition(table); err != nil {
+	// We deliberately do *not* call disk.Partition(table): on a running
+	// system the kernel has the rootfs partition mounted, so the BLKRRPART
+	// ioctl that disk.Partition() issues after writing the GPT fails with
+	// EBUSY. We don't actually need the kernel to re-read the partition
+	// table now — perm-init returns Grew, the caller reboots, and the
+	// kernel reads the new geometry on the next boot. So we drop down to
+	// table.Write() directly, which only writes bytes to disk.
+	rwFile, err := disk.Backend.Writable()
+	if err != nil {
+		return 0, fmt.Errorf("open backing file for write: %w", err)
+	}
+	if err := table.Write(rwFile, disk.Size); err != nil {
 		return 0, fmt.Errorf("write partition table: %w", err)
 	}
 	return Grew, nil
