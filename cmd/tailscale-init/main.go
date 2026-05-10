@@ -6,7 +6,7 @@
 // secret-free. The auth key file path, hostname, and any extra `tailscale up`
 // arguments are passed in via env vars set in the gokrazy PackageConfig:
 //
-//   - TS_AUTH_KEY_PATH      path to the auth key (default /perm/tailscale/authkey)
+//   - TS_AUTH_KEY_PATH      path to the auth key (default /perm/tailscale.authkey)
 //   - TS_HOSTNAME           --hostname value passed to `tailscale up`
 //   - TS_TAILSCALE_UP_ARGS  extra args (whitespace-separated) for `tailscale up`
 //
@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	defaultAuthKeyPath = "/perm/tailscale/authkey"
+	defaultAuthKeyPath = "/perm/tailscale.authkey"
 	defaultHostname    = "gokrazy-runner"
 	tailscaleBinary    = "/user/tailscale"
 )

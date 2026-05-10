@@ -108,7 +108,7 @@ $(emit_packages_json '    ')
         "-ldflags=${VERSION_LDFLAGS}"
       ],
       "Environment": [
-        "TS_AUTH_KEY_PATH=/perm/tailscale/authkey",
+        "TS_AUTH_KEY_PATH=/perm/tailscale.authkey",
         "TS_HOSTNAME=${GOKRAZY_INSTANCE}",
         "TS_TAILSCALE_UP_ARGS=--ssh"
       ]

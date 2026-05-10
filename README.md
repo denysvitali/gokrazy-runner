@@ -36,7 +36,7 @@ different kernel package set.
             │  /perm/runner.token              one-shot GH registration token     │
             │  /perm/runner-data               container's /home/runner mount     │
             │  /perm/breakglass/authorized_keys                                   │
-            │  /perm/tailscale/authkey         tailscale auth key (chmod 0600)    │
+            │  /perm/tailscale.authkey         tailscale auth key (chmod 0600)    │
             │  /perm/tailscale/                tailscaled state (peers, prefs)    │
             └─────────────────────────────────────────────────────────────────────┘
 
@@ -129,8 +129,13 @@ The image bakes in upstream `tailscale.com/cmd/tailscaled` and
 device stays authenticated across reboots.
 
 To register a new device, write a Tailscale auth key to
-`/perm/tailscale/authkey` (`chmod 0600`). On every boot, the one-shot
-`tailscale-init` service reads that file and runs:
+`/perm/tailscale.authkey` (`chmod 0600`). The auth key lives at the
+`/perm/` root rather than inside `/perm/tailscale/` because gokrazy
+bind-mounts tailscaled's `-statedir` read-only into other services'
+namespaces, which would block the web UI from writing there.
+
+On every boot, the one-shot `tailscale-init` service reads that file
+and runs:
 
 ```
 /user/tailscale up --auth-key=… --hostname=$TS_HOSTNAME --ssh
@@ -147,7 +152,7 @@ for a reboot.
 
 Tunables (set in the `cmd/tailscale-init` PackageConfig `Environment`):
 
-- `TS_AUTH_KEY_PATH` — auth key file (default `/perm/tailscale/authkey`)
+- `TS_AUTH_KEY_PATH` — auth key file (default `/perm/tailscale.authkey`)
 - `TS_HOSTNAME` — `--hostname` value (default the gokrazy instance name)
 - `TS_TAILSCALE_UP_ARGS` — extra args appended to `tailscale up` (default `--ssh`)
 

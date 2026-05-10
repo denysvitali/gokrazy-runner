@@ -76,15 +76,18 @@ are picked up without a restart. Endpoints: `GET /` + `/static/...`
 `POST /api/reboot` (gokapi), `GET /api/status`.
 
 **`cmd/tailscale-init` — one-shot, runs every boot.** Reads the auth key
-from `/perm/tailscale/authkey` (path overridable via `TS_AUTH_KEY_PATH`)
+from `/perm/tailscale.authkey` (path overridable via `TS_AUTH_KEY_PATH`)
 and execs `/user/tailscale up --auth-key=<key> --hostname=$TS_HOSTNAME
 $TS_TAILSCALE_UP_ARGS`. If the file is missing or empty it logs and exits
 cleanly so the rest of the system stays usable without Tailscale.
 tailscaled persists state under `/perm/tailscale/` (set via the
 `-statedir` flag in PackageConfig), so re-running `tailscale up` on every
-boot is idempotent. The webui's `POST /api/tailscale` validates the key
-(must start with `tskey-auth-`), persists it, and runs `tailscale up`
-right away — no reboot needed.
+boot is idempotent. The auth key is intentionally a flat file at the
+`/perm/` root, *not* under `/perm/tailscale/`: gokrazy bind-mounts the
+declared `-statedir` read-only into other services' namespaces, so the
+webui can't write inside `/perm/tailscale/`. The webui's
+`POST /api/tailscale` validates the key (must start with `tskey-auth-`),
+persists it, and runs `tailscale up` right away — no reboot needed.
 
 **Runtime config lives in `/perm`, not in the image.** `runner.env`
 (KEY=VALUE), `runner.token` (chmod 0600, one-shot, only consumed on the
@@ -92,8 +95,9 @@ right away — no reboot needed.
 afterwards), `breakglass/authorized_keys`, `gokr-pw.txt` (the
 gokrazy update password, also used by runner-webui; falls back to the
 rootfs-baked `/etc/gokr-pw.txt` if the perm copy is missing), and
-`tailscale/authkey` (chmod 0600; tailscaled state co-located in the same
-`/perm/tailscale/` directory).
+`tailscale.authkey` (chmod 0600; flat file at the `/perm/` root —
+tailscaled's state lives in `/perm/tailscale/`, kept separate because
+gokrazy's bind-mount of `-statedir` is read-only for other services).
 
 ## Two invariants to preserve
 

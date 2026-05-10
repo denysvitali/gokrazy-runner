@@ -84,7 +84,7 @@ $(emit_packages_json '    ')
     "github.com/denysvitali/gokrazy-runner/cmd/runner-webui": {},
     "github.com/denysvitali/gokrazy-runner/cmd/tailscale-init": {
       "Environment": [
-        "TS_AUTH_KEY_PATH=/perm/tailscale/authkey",
+        "TS_AUTH_KEY_PATH=/perm/tailscale.authkey",
         "TS_HOSTNAME=$INSTANCE_NAME",
         "TS_TAILSCALE_UP_ARGS=--ssh"
       ]

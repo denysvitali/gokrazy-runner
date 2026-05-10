@@ -16,7 +16,11 @@ const (
 	// TailscaleAuthKeyFile is the on-device path that cmd/tailscale-init reads
 	// at boot to register with the tailnet. Must match TS_AUTH_KEY_PATH in the
 	// gokrazy PackageConfig for tailscale-init.
-	TailscaleAuthKeyFile = "/perm/tailscale/authkey"
+	//
+	// Kept as a flat file in /perm/ rather than under /perm/tailscale/ because
+	// gokrazy bind-mounts tailscaled's -statedir read-only into other services'
+	// namespaces, so the webui can't write inside /perm/tailscale/.
+	TailscaleAuthKeyFile = "/perm/tailscale.authkey"
 
 	// MaxTailscaleAuthKeyLength is a generous upper bound for tskey-* values.
 	MaxTailscaleAuthKeyLength = 512
