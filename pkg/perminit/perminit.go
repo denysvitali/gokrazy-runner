@@ -48,7 +48,10 @@ const (
 // partition 4 extends to the last usable LBA of the device. It is a no-op if
 // partition 4 already covers the disk.
 func GrowPermPartition(blockDev string) (GrowOutcome, error) {
-	disk, err := diskfs.Open(blockDev, diskfs.WithOpenMode(diskfs.ReadWriteExclusive))
+	// Open without O_EXCL: at the point perm-init runs the kernel already has
+	// the rootfs partition (partition 2) mounted, so an exclusive open would
+	// fail with EBUSY on real hardware.
+	disk, err := diskfs.Open(blockDev, diskfs.WithOpenMode(diskfs.ReadWrite))
 	if err != nil {
 		return 0, fmt.Errorf("open %s: %w", blockDev, err)
 	}
