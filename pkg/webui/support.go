@@ -46,6 +46,11 @@ const (
 	supportKmsgTailLines     = 200
 	supportContainerTailLogs = "200"
 	supportCommandTimeout    = 5 * time.Second
+	// supportWriteDeadline overrides the http.Server WriteTimeout for the
+	// support endpoint. Bundling tailscale netcheck + podman queries on a
+	// Pi can exceed the default 30s write deadline; without this the
+	// browser would see "Failed to fetch" mid-response.
+	supportWriteDeadline = 2 * time.Minute
 )
 
 func (o *SupportOptions) defaults() {
@@ -92,6 +97,13 @@ func (s *Server) handleSupport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Bundle collection may take longer than the http.Server WriteTimeout
+	// (subprocess calls + tailscale netcheck), so push the per-request
+	// write deadline out before we start work. ResponseController works
+	// transparently through TLS; if the underlying connection doesn't
+	// support deadlines we silently fall back to the server-wide timeout.
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Now().Add(supportWriteDeadline))
 	bundle := s.cfg.Support
 	bundle.defaults()
 	out := bundle.collect(r.Context(), s.cfg)
@@ -104,6 +116,16 @@ func (o *SupportOptions) collect(ctx context.Context, server ServerConfig) strin
 	envPath := firstNonEmpty(o.EnvPath, server.EnvPath)
 	tokenPath := firstNonEmpty(o.TokenPath, server.TokenPath)
 	tsKeyPath := firstNonEmpty(o.TailscaleKeyPath, server.TailscaleKeyPath)
+
+	// Subprocess sections are independent and each carries its own 5s
+	// timeout; running them serially used to push the total beyond the
+	// http.Server WriteTimeout. Kick them off in parallel up front, then
+	// fold their results into the bundle in deterministic order.
+	podmanPS := o.runAsync(ctx, o.PodmanBinary, "ps", "-a")
+	podmanImages := o.runAsync(ctx, o.PodmanBinary, "images")
+	podmanLogs := o.runAsync(ctx, o.PodmanBinary, "logs", "--tail", supportContainerTailLogs, o.ContainerName)
+	tsStatus := o.runAsync(ctx, o.TailscaleBinary, "status")
+	tsNetcheck := o.runAsync(ctx, o.TailscaleBinary, "netcheck")
 
 	var b strings.Builder
 	writeHeader(&b, o, server)
@@ -148,22 +170,36 @@ func (o *SupportOptions) collect(ctx context.Context, server ServerConfig) strin
 		}
 		return tailLines(raw, supportKmsgTailLines), nil
 	})
-	o.section(&b, "podman ps -a", func() (string, error) {
-		return runWithTimeout(ctx, o.runCmd, o.PodmanBinary, "ps", "-a")
-	})
-	o.section(&b, "podman images", func() (string, error) {
-		return runWithTimeout(ctx, o.runCmd, o.PodmanBinary, "images")
-	})
-	o.section(&b, "podman logs "+o.ContainerName+" (last "+supportContainerTailLogs+" lines)", func() (string, error) {
-		return runWithTimeout(ctx, o.runCmd, o.PodmanBinary, "logs", "--tail", supportContainerTailLogs, o.ContainerName)
-	})
-	o.section(&b, "tailscale status", func() (string, error) {
-		return runWithTimeout(ctx, o.runCmd, o.TailscaleBinary, "status")
-	})
-	o.section(&b, "tailscale netcheck", func() (string, error) {
-		return runWithTimeout(ctx, o.runCmd, o.TailscaleBinary, "netcheck")
-	})
+	o.section(&b, "podman ps -a", podmanPS.wait)
+	o.section(&b, "podman images", podmanImages.wait)
+	o.section(&b, "podman logs "+o.ContainerName+" (last "+supportContainerTailLogs+" lines)", podmanLogs.wait)
+	o.section(&b, "tailscale status", tsStatus.wait)
+	o.section(&b, "tailscale netcheck", tsNetcheck.wait)
 	return b.String()
+}
+
+// asyncResult is a one-shot future for a runWithTimeout call.
+type asyncResult struct {
+	done chan struct{}
+	body string
+	err  error
+}
+
+func (a *asyncResult) wait() (string, error) {
+	<-a.done
+	return a.body, a.err
+}
+
+// runAsync starts runWithTimeout in a goroutine and returns a future.
+// Each call inherits the supportCommandTimeout, so a stalled binary
+// can't drag the bundle past its write deadline.
+func (o *SupportOptions) runAsync(ctx context.Context, name string, args ...string) *asyncResult {
+	r := &asyncResult{done: make(chan struct{})}
+	go func() {
+		defer close(r.done)
+		r.body, r.err = runWithTimeout(ctx, o.runCmd, name, args...)
+	}()
+	return r
 }
 
 func writeHeader(b *strings.Builder, o *SupportOptions, server ServerConfig) {
