@@ -76,6 +76,13 @@ cat > "$INSTANCE_DIR/config.json" <<EOF
 $(emit_packages_json '    ')
   ],
   "PackageConfig": {
+    "github.com/gokrazy/podman": {
+      "Environment": [
+        "CNI_CONFIG_DIR=/etc/cni/net.d"
+      ]
+    },
+    "github.com/greenpau/cni-plugins/cmd/cni-nftables-portmap": {},
+    "github.com/greenpau/cni-plugins/cmd/cni-nftables-firewall": {},
     "github.com/gokrazy/breakglass": {
       "CommandLineFlags": [
         "-authorized_keys=/perm/breakglass/authorized_keys"

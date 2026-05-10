@@ -11,6 +11,8 @@ github.com/gokrazy/breakglass
 github.com/gokrazy/podman
 github.com/gokrazy/iptables
 github.com/gokrazy/nsenter
+github.com/greenpau/cni-plugins/cmd/cni-nftables-portmap
+github.com/greenpau/cni-plugins/cmd/cni-nftables-firewall
 
 # Tailscale (auto-registers with /perm/tailscale/authkey via cmd/tailscale-init)
 tailscale.com/cmd/tailscaled
