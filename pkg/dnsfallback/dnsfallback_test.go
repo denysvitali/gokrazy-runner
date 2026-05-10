@@ -110,6 +110,69 @@ func TestEnsureRejectsEmptyArgs(t *testing.T) {
 	}
 }
 
+func TestEnsureReplacesSymlinkToUnwritableTarget(t *testing.T) {
+	// Mirrors the gokrazy boot state: /tmp/resolv.conf is a symlink to a
+	// file we cannot truncate-and-write through (/proc/net/pnp returns
+	// EIO). Ensure must atomically replace the symlink with a real file
+	// rather than following it.
+	dir := t.TempDir()
+	target := filepath.Join(dir, "pnp")
+	if err := os.WriteFile(target, []byte("kernel-supplied\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	// Drop write bit on the dir holding the target so writes through
+	// the symlink fail, but the link's own directory (dir) stays
+	// writable so we can rename into it.
+	targetDir := filepath.Join(dir, "ro")
+	if err := os.Mkdir(targetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	roTarget := filepath.Join(targetDir, "pnp")
+	if err := os.WriteFile(roTarget, []byte("kernel-supplied\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(targetDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(targetDir, 0o755) })
+
+	path := filepath.Join(dir, "resolv.conf")
+	if err := os.Symlink(roTarget, path); err != nil {
+		t.Fatal(err)
+	}
+
+	action, err := Ensure(path, DefaultNameservers)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if action != ActionWrote {
+		t.Fatalf("action = %v, want ActionWrote", action)
+	}
+	// After Ensure, path must be a regular file containing our nameservers.
+	fi, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("path is still a symlink: %v", fi.Mode())
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "nameserver 1.1.1.1") {
+		t.Fatalf("body missing fallback: %s", body)
+	}
+	// The original target must be untouched.
+	orig, err := os.ReadFile(roTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(orig) != "kernel-supplied\n" {
+		t.Fatalf("symlink target was modified: %q", orig)
+	}
+}
+
 func TestEnsurePropagatesReadErrors(t *testing.T) {
 	dir := t.TempDir()
 	// A directory at the path will cause ReadFile to return EISDIR,

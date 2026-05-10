@@ -45,10 +45,15 @@ to reformat a partition that already has an ext/FAT signature. The reboot
 goes through `gokapi.ConnectOnDevice()` → on-device `/update/reboot`.
 
 **`cmd/runner-init` — long-lived supervisor.** At startup, calls
-`pkg/dnsfallback.Ensure("/etc/resolv.conf", ...)` which writes
+`pkg/dnsfallback.Ensure("/tmp/resolv.conf", ...)` which writes
 `nameserver 1.1.1.1` / `nameserver 9.9.9.9` if (and only if) the file is
 missing, empty, or has no `nameserver` lines — DHCP/Tailscale-supplied
-resolvers always win. Then waits for `/perm/runner.env`
+resolvers always win. The target is `/tmp/resolv.conf` (not
+`/etc/resolv.conf`) because on gokrazy `/etc/resolv.conf` is a symlink to
+`/tmp/resolv.conf`, which itself starts as a symlink to `/proc/net/pnp`;
+writing through the chain returns EIO. `dnsfallback.Ensure` writes
+atomically via temp-file + rename so the symlink is replaced with a
+real file, mirroring `gokrazy/dhcp`'s use of `renameio`. Then waits for `/perm/runner.env`
 to exist, then loops: parse the env file, read `/perm/runner.token` (a
 GitHub *registration* token, not a PAT), `podman rm -f` any stale
 container, `podman pull`, then `podman run` with these key flags:

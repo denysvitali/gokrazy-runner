@@ -97,11 +97,15 @@ func main() {
 		log.Fatalf("preparing runtime dirs: %v", err)
 	}
 
-	switch action, err := dnsfallback.Ensure("/etc/resolv.conf", dnsfallback.DefaultNameservers); {
+	// /etc/resolv.conf is a symlink to /tmp/resolv.conf on gokrazy, which in
+	// turn is a symlink to /proc/net/pnp until gokrazy/dhcp replaces it with
+	// a real file. Write through the canonical /tmp/resolv.conf path so the
+	// symlink chain stays intact and DHCP can still overwrite our fallback.
+	switch action, err := dnsfallback.Ensure("/tmp/resolv.conf", dnsfallback.DefaultNameservers); {
 	case err != nil:
 		log.Printf("warning: ensure DNS fallback: %v", err)
 	case action == dnsfallback.ActionWrote:
-		log.Printf("seeded /etc/resolv.conf with fallback nameservers %v", dnsfallback.DefaultNameservers)
+		log.Printf("seeded /tmp/resolv.conf with fallback nameservers %v", dnsfallback.DefaultNameservers)
 	}
 
 	if err := waitForPerm(ctx); err != nil {

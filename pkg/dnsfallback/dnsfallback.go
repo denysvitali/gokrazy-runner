@@ -1,13 +1,22 @@
-// Package dnsfallback seeds /etc/resolv.conf with public resolvers when
+// Package dnsfallback seeds resolv.conf with public resolvers when
 // the file is missing or has no usable nameserver entries.
 //
 // On gokrazy DNS comes from DHCP. When the upstream router doesn't hand
 // out a DNS server (IPv6-only networks, captive portals, misconfigured
-// DHCP), /etc/resolv.conf stays empty and Go's resolver falls back to
+// DHCP), resolv.conf stays empty and Go's resolver falls back to
 // its hardcoded defaults of 127.0.0.1:53 and [::1]:53 — neither of
 // which is listening — and every lookup fails with ECONNREFUSED. The
 // matching error inside containers running with --network=host is
 // EAI_AGAIN ("Resource temporarily unavailable").
+//
+// On gokrazy the canonical DNS file is /tmp/resolv.conf: /etc/resolv.conf
+// is a baked-in symlink to /tmp/resolv.conf, and /tmp/resolv.conf is a
+// symlink to /proc/net/pnp until gokrazy/dhcp replaces it via renameio
+// with a real file. Writing through the symlink chain via os.WriteFile
+// follows down to /proc/net/pnp, which is read-only for userspace and
+// returns EIO. Ensure therefore writes atomically by creating a temp
+// file alongside the target and renaming over it — that replaces the
+// symlink with a real file, exactly like gokrazy/dhcp does.
 //
 // Ensure runs once at process start. It never overwrites a populated
 // resolv.conf, so DHCP- or Tailscale-supplied nameservers always win.
@@ -19,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -64,10 +74,43 @@ func Ensure(path string, nameservers []string) (Action, error) {
 	}
 
 	body := render(nameservers)
-	if err := os.WriteFile(path, body, 0o644); err != nil { // #nosec G306 -- world-readable matches stock /etc/resolv.conf
+	if err := writeAtomic(path, body); err != nil {
 		return ActionUnchanged, fmt.Errorf("write %s: %w", path, err)
 	}
 	return ActionWrote, nil
+}
+
+// writeAtomic writes body to a temp file in path's directory and renames
+// it over path. This replaces a symlink at path with a real file, which
+// is what we want on gokrazy where /tmp/resolv.conf (and through it
+// /etc/resolv.conf) starts out as a symlink to /proc/net/pnp.
+func writeAtomic(path string, body []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".resolv.conf.*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+	if _, err := tmp.Write(body); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil { // #nosec G302 -- world-readable matches stock resolv.conf
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
 }
 
 func render(nameservers []string) []byte {
