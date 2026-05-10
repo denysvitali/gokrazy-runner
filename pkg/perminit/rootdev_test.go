@@ -8,10 +8,11 @@ import (
 
 func TestBootBlockDevice(t *testing.T) {
 	tests := []struct {
-		name    string
-		cmdline string
-		want    string
-		wantErr bool
+		name         string
+		cmdline      string
+		want         string
+		wantErr      bool
+		wantPartUUID string // if non-empty, expect resolvePartUUID call with this UUID
 	}{
 		{
 			name:    "raspberry pi mmcblk0p2",
@@ -44,15 +45,26 @@ func TestBootBlockDevice(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "PARTUUID form is not supported",
-			cmdline: "root=PARTUUID=aabbccdd-02",
-			wantErr: true,
+			name:         "PARTUUID with PARTNROFF (gokrazy default)",
+			cmdline:      "console=tty1 root=PARTUUID=60c24cc1-f3f9-427a-8199-89a6807c0001/PARTNROFF=1 init=/gokrazy/init",
+			wantPartUUID: "60c24cc1-f3f9-427a-8199-89a6807c0001",
+			want:         "/dev/mmcblk0",
+		},
+		{
+			name:         "PARTUUID without PARTNROFF",
+			cmdline:      "root=PARTUUID=aabbccdd-eeff-0011-2233-445566778899",
+			wantPartUUID: "aabbccdd-eeff-0011-2233-445566778899",
+			want:         "/dev/sda",
 		},
 	}
 
 	dir := t.TempDir()
 	origCmdline := CmdlineFile
-	t.Cleanup(func() { CmdlineFile = origCmdline })
+	origResolve := resolvePartUUID
+	t.Cleanup(func() {
+		CmdlineFile = origCmdline
+		resolvePartUUID = origResolve
+	})
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,6 +73,19 @@ func TestBootBlockDevice(t *testing.T) {
 				t.Fatal(err)
 			}
 			CmdlineFile = path
+			if tc.wantPartUUID != "" {
+				resolvePartUUID = func(uuid string) (string, error) {
+					if uuid != tc.wantPartUUID {
+						t.Errorf("resolvePartUUID(%q), want %q", uuid, tc.wantPartUUID)
+					}
+					return tc.want, nil
+				}
+			} else {
+				resolvePartUUID = func(uuid string) (string, error) {
+					t.Errorf("resolvePartUUID called unexpectedly with %q", uuid)
+					return "", nil
+				}
+			}
 			got, err := BootBlockDevice()
 			if tc.wantErr {
 				if err == nil {
