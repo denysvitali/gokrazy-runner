@@ -123,20 +123,37 @@ func HasExistingFilesystem(devicePath string) (bool, error) {
 	return false, nil
 }
 
-// IsPermMounted reports whether /perm currently has its own mount entry.
+// MountInfoFile is overridable in tests; in production it points at the
+// per-process mountinfo file the kernel exposes.
+var MountInfoFile = "/proc/self/mountinfo"
+
+// IsPermMounted reports whether /perm is mounted *and writable*.
+//
+// gokrazy bind-mounts the read-only rootfs at /perm when partition 4 can't
+// be mounted (unformatted, too small, missing). That fallback shows up in
+// /proc/self/mountinfo just like a real /perm mount, so we additionally
+// require the mount options not to contain "ro" — otherwise perm-init would
+// see "/perm is mounted" on first boot, do nothing, and leave the device
+// stuck with a read-only /perm forever.
 func IsPermMounted() (bool, error) {
-	b, err := os.ReadFile("/proc/self/mountinfo")
+	b, err := os.ReadFile(MountInfoFile)
 	if err != nil {
 		return false, err
 	}
 	for _, line := range strings.Split(string(b), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 5 {
+		if len(fields) < 6 {
 			continue
 		}
-		if fields[4] == "/perm" {
-			return true, nil
+		if fields[4] != "/perm" {
+			continue
 		}
+		for _, opt := range strings.Split(fields[5], ",") {
+			if opt == "ro" {
+				return false, nil
+			}
+		}
+		return true, nil
 	}
 	return false, nil
 }
