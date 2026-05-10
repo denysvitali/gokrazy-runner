@@ -127,6 +127,7 @@ cmd/runner-init/      runs the GitHub runner container under podman
 cmd/runner-webui/     HTTPS web UI for runner config + OTA
 cmd/tailscale-init/   one-shot: tailscale up using /perm/tailscale.authkey
 cmd/usbdev-init/      udev stand-in: mknods /dev/bus/usb/BBB/DDD from sysfs
+pkg/dnsfallback/      seeds /etc/resolv.conf when DHCP supplies no DNS
 pkg/perminit/         GPT/partition helpers shared by perm-init
 scripts/
   gok-packages.txt    canonical list of gokrazy packages

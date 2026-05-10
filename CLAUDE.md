@@ -44,7 +44,11 @@ next boot; (2) if partition 4 has no filesystem, run mke2fs and reboot;
 to reformat a partition that already has an ext/FAT signature. The reboot
 goes through `gokapi.ConnectOnDevice()` → on-device `/update/reboot`.
 
-**`cmd/runner-init` — long-lived supervisor.** Waits for `/perm/runner.env`
+**`cmd/runner-init` — long-lived supervisor.** At startup, calls
+`pkg/dnsfallback.Ensure("/etc/resolv.conf", ...)` which writes
+`nameserver 1.1.1.1` / `nameserver 9.9.9.9` if (and only if) the file is
+missing, empty, or has no `nameserver` lines — DHCP/Tailscale-supplied
+resolvers always win. Then waits for `/perm/runner.env`
 to exist, then loops: parse the env file, read `/perm/runner.token` (a
 GitHub *registration* token, not a PAT), `podman rm -f` any stale
 container, `podman pull`, then `podman run` with these key flags:

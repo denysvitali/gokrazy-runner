@@ -31,6 +31,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/denysvitali/gokrazy-runner/pkg/dnsfallback"
 )
 
 const (
@@ -93,6 +95,13 @@ func main() {
 
 	if err := ensureRuntimeDirs(); err != nil {
 		log.Fatalf("preparing runtime dirs: %v", err)
+	}
+
+	switch action, err := dnsfallback.Ensure("/etc/resolv.conf", dnsfallback.DefaultNameservers); {
+	case err != nil:
+		log.Printf("warning: ensure DNS fallback: %v", err)
+	case action == dnsfallback.ActionWrote:
+		log.Printf("seeded /etc/resolv.conf with fallback nameservers %v", dnsfallback.DefaultNameservers)
 	}
 
 	if err := waitForPerm(ctx); err != nil {
