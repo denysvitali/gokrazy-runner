@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"log"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"github.com/denysvitali/gokrazy-runner/pkg/ota"
+	"github.com/denysvitali/gokrazy-runner/pkg/tlsconfig"
 	"github.com/denysvitali/gokrazy-runner/pkg/webui"
 )
 
@@ -28,11 +28,6 @@ const (
 	pwFallback = "/etc/gokr-pw.txt"
 
 	defaultPassword = "gokrazy-runner"
-
-	rootCertFile = "/etc/ssl/gokrazy-web.pem"
-	rootKeyFile  = "/etc/ssl/gokrazy-web.key.pem"
-	permCertFile = "/perm/ssl/gokrazy-web.pem"
-	permKeyFile  = "/perm/ssl/gokrazy-web.key.pem"
 
 	httpPort  = "8080"
 	httpsPort = "8443"
@@ -84,11 +79,12 @@ func main() {
 	useHTTPS := false
 	var certFile, keyFile string
 	if os.Getenv("WEBUI_LISTEN_HTTP_ONLY") == "" {
-		if c, k, ok := findCertPair(); ok {
+		ensurePersistentTLSCertificate()
+		if cfg := tlsconfig.ResolveConfig(); cfg.CertificatesExist() {
 			useHTTPS = true
-			certFile, keyFile = c, k
+			certFile, keyFile = cfg.CertFile, cfg.KeyFile
 		} else {
-			log.Printf("warning: no TLS cert found at %s or %s; falling back to plain HTTP. Generate a cert or set WEBUI_LISTEN_HTTP_ONLY to silence this.", rootCertFile, permCertFile)
+			log.Printf("warning: no TLS cert available; falling back to plain HTTP. Set WEBUI_LISTEN_HTTP_ONLY to silence this.")
 		}
 	}
 
@@ -106,7 +102,7 @@ func main() {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		ReadHeaderTimeout: 10 * time.Second,
-		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
+		ErrorLog:          tlsconfig.NewServerErrorLog(),
 	}
 
 	host, _ := os.Hostname()
@@ -162,24 +158,25 @@ func waitForPerm(ctx context.Context) {
 	}
 }
 
-func findCertPair() (string, string, bool) {
-	for _, p := range [][2]string{{rootCertFile, rootKeyFile}, {permCertFile, permKeyFile}} {
-		if isRegularReadable(p[0]) && isRegularReadable(p[1]) {
-			return p[0], p[1], true
-		}
+// ensurePersistentTLSCertificate generates or renews the per-device cert at
+// /perm/ssl when needed. The shared rootfs cert at /etc/ssl is identical on
+// every device built from the same image, so we never want to keep using it
+// once /perm is writable and the clock is sane.
+func ensurePersistentTLSCertificate() {
+	if !tlsconfig.CurrentTimeCanIssueCertificate(time.Now()) {
+		log.Printf("system clock not yet sane; deferring per-device TLS cert generation")
+		return
 	}
-	return "", "", false
-}
-
-func isRegularReadable(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return false
+	if _, err := os.Stat(permRoot); err != nil {
+		log.Printf("skipping per-device TLS cert generation: %s not available: %v", permRoot, err)
+		return
 	}
-	f, err := os.Open(path) // #nosec G304 -- fixed candidate paths
+	info, regenerated, err := tlsconfig.EnsurePersistentSelfSignedCertificate(nil)
 	if err != nil {
-		return false
+		log.Printf("warning: failed to ensure per-device TLS cert: %v", err)
+		return
 	}
-	_ = f.Close()
-	return true
+	if regenerated {
+		log.Printf("generated per-device TLS cert at %s (CN=%s, expires %s)", info.CertFile, info.CommonName, info.NotAfter.Format(time.RFC3339))
+	}
 }

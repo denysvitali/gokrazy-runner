@@ -59,9 +59,14 @@ IMAGE/RUNNER_IMAGE) are consumed by runner-init; everything else in
 
 **`cmd/runner-webui` — long-lived web UI service.** Vanilla `net/http`
 server serving an embedded HTML/JS app behind HTTP Basic Auth. Listens
-on `:8443` over HTTPS using the gokrazy self-signed cert (tries
-`/etc/ssl/gokrazy-web.{pem,key.pem}` then `/perm/ssl/...`); falls back
-to `:8080` plain HTTP if no cert is readable, or if
+on `:8443` over HTTPS using a per-device self-signed cert managed by
+`pkg/tlsconfig`: on startup it ensures `/perm/ssl/gokrazy-web.{pem,
+key.pem}` exists (ECDSA P-256, 1-year validity, regenerated within
+30 days of expiry) and `ResolveConfig()` always prefers the perm pair
+over the shared rootfs cert at `/etc/ssl/gokrazy-web.*`. The rootfs
+pair is only a one-boot fallback before the perm cert has been
+generated (or while the system clock is still pre-2024). Falls back
+to `:8080` plain HTTP if no cert is readable or if
 `WEBUI_LISTEN_HTTP_ONLY` is set. The Basic-Auth password *is* the
 gokrazy update password — read from `/perm/gokr-pw.txt`, falling back
 to `/etc/gokr-pw.txt` (the build-time seed), and finally to a literal
