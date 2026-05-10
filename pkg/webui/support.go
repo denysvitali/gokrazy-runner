@@ -51,6 +51,11 @@ const (
 	// Pi can exceed the default 30s write deadline; without this the
 	// browser would see "Failed to fetch" mid-response.
 	supportWriteDeadline = 2 * time.Minute
+	// supportTotalBudget bounds the entire bundle, even if individual
+	// futures wedge. Each subprocess section already runs in parallel
+	// with a 5s per-command timeout + 2s WaitDelay, so 30s here only
+	// kicks in for genuinely hung work.
+	supportTotalBudget = 30 * time.Second
 )
 
 func (o *SupportOptions) defaults() {
@@ -112,10 +117,16 @@ func (s *Server) handleSupport(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, out)
 }
 
-func (o *SupportOptions) collect(ctx context.Context, server ServerConfig) string {
+func (o *SupportOptions) collect(parent context.Context, server ServerConfig) string {
 	envPath := firstNonEmpty(o.EnvPath, server.EnvPath)
 	tokenPath := firstNonEmpty(o.TokenPath, server.TokenPath)
 	tsKeyPath := firstNonEmpty(o.TailscaleKeyPath, server.TailscaleKeyPath)
+
+	// Hard cap the entire bundle. asyncResult.wait honours this so a
+	// stuck future can't hang the request even if exec's WaitDelay
+	// somehow fails to unblock CombinedOutput.
+	ctx, cancel := context.WithTimeout(parent, supportTotalBudget)
+	defer cancel()
 
 	// Subprocess sections are independent and each carries its own 5s
 	// timeout; running them serially used to push the total beyond the
@@ -170,11 +181,11 @@ func (o *SupportOptions) collect(ctx context.Context, server ServerConfig) strin
 		}
 		return tailLines(raw, supportKmsgTailLines), nil
 	})
-	o.section(&b, "podman ps -a", podmanPS.wait)
-	o.section(&b, "podman images", podmanImages.wait)
-	o.section(&b, "podman logs "+o.ContainerName+" (last "+supportContainerTailLogs+" lines)", podmanLogs.wait)
-	o.section(&b, "tailscale status", tsStatus.wait)
-	o.section(&b, "tailscale netcheck", tsNetcheck.wait)
+	o.section(&b, "podman ps -a", podmanPS.waiter(ctx))
+	o.section(&b, "podman images", podmanImages.waiter(ctx))
+	o.section(&b, "podman logs "+o.ContainerName+" (last "+supportContainerTailLogs+" lines)", podmanLogs.waiter(ctx))
+	o.section(&b, "tailscale status", tsStatus.waiter(ctx))
+	o.section(&b, "tailscale netcheck", tsNetcheck.waiter(ctx))
 	return b.String()
 }
 
@@ -185,9 +196,15 @@ type asyncResult struct {
 	err  error
 }
 
-func (a *asyncResult) wait() (string, error) {
-	<-a.done
-	return a.body, a.err
+func (a *asyncResult) waiter(ctx context.Context) func() (string, error) {
+	return func() (string, error) {
+		select {
+		case <-a.done:
+			return a.body, a.err
+		case <-ctx.Done():
+			return "(deadline exceeded)", ctx.Err()
+		}
+	}
 }
 
 // runAsync starts runWithTimeout in a goroutine and returns a future.
@@ -433,7 +450,13 @@ func runWithTimeout(parent context.Context, run func(context.Context, string, ..
 }
 
 func realRunCmd(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, name, args...)
+	// Without WaitDelay, CombinedOutput blocks on pipe drain even after
+	// SIGKILL if the killed child left a grandchild holding stdout open
+	// (podman shim, tailscale daemon helpers). Force pipe teardown 2s
+	// after the context fires so the call always returns.
+	cmd.WaitDelay = 2 * time.Second
+	return cmd.CombinedOutput()
 }
 
 func realHostname() string {
