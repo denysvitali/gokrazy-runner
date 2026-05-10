@@ -23,3 +23,4 @@ tailscale.com/cmd/tailscale
 ./cmd/runner-init
 ./cmd/runner-webui
 ./cmd/tailscale-init
+./cmd/usbdev-init

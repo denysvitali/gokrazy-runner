@@ -96,6 +96,7 @@ $(emit_packages_json '    ')
         "TS_TAILSCALE_UP_ARGS=--ssh"
       ]
     },
+    "github.com/denysvitali/gokrazy-runner/cmd/usbdev-init": {},
     "tailscale.com/cmd/tailscaled": {
       "CommandLineFlags": [
         "-statedir=/perm/tailscale"

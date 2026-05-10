@@ -21,6 +21,7 @@ build:
 	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags='$(LDFLAGS)' -o dist/runner-init ./cmd/runner-init
 	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags='$(LDFLAGS)' -o dist/runner-webui ./cmd/runner-webui
 	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags='$(LDFLAGS)' -o dist/tailscale-init ./cmd/tailscale-init
+	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags='$(LDFLAGS)' -o dist/usbdev-init ./cmd/usbdev-init
 
 .PHONY: build-arm64
 build-arm64:
@@ -29,6 +30,7 @@ build-arm64:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags='$(LDFLAGS)' -o dist/runner-init-linux-arm64 ./cmd/runner-init
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags='$(LDFLAGS)' -o dist/runner-webui-linux-arm64 ./cmd/runner-webui
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags='$(LDFLAGS)' -o dist/tailscale-init-linux-arm64 ./cmd/tailscale-init
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags='$(LDFLAGS)' -o dist/usbdev-init-linux-arm64 ./cmd/usbdev-init
 
 .PHONY: vet
 vet:

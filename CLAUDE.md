@@ -31,7 +31,7 @@ when reproducing CI locally: `GOKRAZY_INSTANCE`, `GOKRAZY_PARENT_DIR`,
 
 ## Architecture
 
-Four Go binaries are baked into the gokrazy root, plus stock gokrazy
+Five Go binaries are baked into the gokrazy root, plus stock gokrazy
 packages (`podman`, `iptables`, `nsenter`, `breakglass`, `serial-busybox`,
 `fbstatus`) and upstream `tailscale.com/cmd/tailscaled` +
 `tailscale.com/cmd/tailscale`.
@@ -109,6 +109,21 @@ declared `-statedir` read-only into other services' namespaces, so the
 webui can't write inside `/perm/tailscale/`. The webui's
 `POST /api/tailscale` validates the key (must start with `tskey-auth-`),
 persists it, and runs `tailscale up` right away — no reboot needed.
+
+**`cmd/usbdev-init` — long-lived udev stand-in.** Modern USB libraries
+(nusb, libusb) open devices via `/dev/bus/usb/<busnum>/<devnum>`. On a
+stock distro udev creates those nodes from kernel uevents; gokrazy has
+no udev, so the kernel populates `/sys/bus/usb/devices/` but the
+`/dev/bus/usb/` tree never appears and tools like `probe-rs run` fail
+with `os error 2`. usbdev-init walks `/sys/bus/usb/devices/*` every
+five seconds, reads `busnum`/`devnum`/`dev` for each non-interface
+entry, and `mknod`s the matching char device (mode 0666). Nodes for
+vanished devices are pruned. runner-init bind-mounts the host
+`/dev/bus/usb` and `/sys/bus/usb` into the runner container so probe
+access works inside the actions-runner job. A periodic scan is
+deliberately used in place of a netlink uevent listener — probes
+typically stay plugged in across CI runs, so the simpler approach
+suffices.
 
 **Runtime config lives in `/perm`, not in the image.** `runner.env`
 (KEY=VALUE), `runner.token` (chmod 0600, one-shot, only consumed on the

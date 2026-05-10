@@ -21,6 +21,7 @@ different kernel package set.
             │  perm-init     (one-shot: grow GPT part 4, mke2fs, reboot)          │
             │  runner-init   (long-lived: read /perm/runner.env, run podman)      │
             │  tailscale-init (one-shot: tailscale up via /perm/tailscale/authkey)│
+            │  usbdev-init   (long-lived: udev-stand-in, populates /dev/bus/usb)  │
             │  tailscaled, tailscale  (upstream tailscale.com binaries)           │
             │  gokrazy/podman, /iptables, /nsenter   (CNI + container runtime)    │
             │  gokrazy/breakglass     (emergency SSH, key-only)                   │
@@ -59,6 +60,9 @@ with a derivative image that bakes more tools in.
 ```
 cmd/perm-init/        one-shot service: grow + format /perm on first boot
 cmd/runner-init/      runs the GitHub runner container under podman
+cmd/runner-webui/     HTTPS web UI for runner config + OTA
+cmd/tailscale-init/   one-shot: tailscale up using /perm/tailscale.authkey
+cmd/usbdev-init/      udev stand-in: mknods /dev/bus/usb/BBB/DDD from sysfs
 pkg/perminit/         GPT/partition helpers shared by perm-init
 scripts/
   gok-packages.txt    canonical list of gokrazy packages

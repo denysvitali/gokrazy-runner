@@ -248,6 +248,11 @@ func buildPodmanArgs(cfg *config) []string {
 		"--network=host",
 		"--restart=no",
 		"-v", dataDir + ":" + containerHome,
+		// USB device nodes (populated on the host by cmd/usbdev-init) and the
+		// matching sysfs tree, so probe-rs/nusb-style tools inside the runner
+		// can enumerate and open attached probes.
+		"-v", "/dev/bus/usb:/dev/bus/usb",
+		"-v", "/sys/bus/usb:/sys/bus/usb",
 		"-e", "REPO_URL=" + cfg.URL,
 		"-e", "RUNNER_NAME=" + cfg.Name,
 		"-e", "LABELS=" + cfg.Labels,
