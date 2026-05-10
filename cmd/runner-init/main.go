@@ -82,6 +82,10 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 
+	if err := ensureRuntimeDirs(); err != nil {
+		log.Fatalf("preparing runtime dirs: %v", err)
+	}
+
 	if err := waitForPerm(ctx); err != nil {
 		log.Fatalf("waiting for /perm: %v", err)
 	}
@@ -268,6 +272,21 @@ func pullImage(ctx context.Context, image string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// ensureRuntimeDirs creates directories podman expects on a stock filesystem
+// but that gokrazy's tmpfs-backed /var doesn't provide on a fresh boot.
+// Without /var/tmp, `podman pull` fails with "creating a temporary directory:
+// stat /var/tmp: no such file or directory".
+func ensureRuntimeDirs() error {
+	if err := os.MkdirAll("/var/tmp", 0o1777); err != nil {
+		return fmt.Errorf("mkdir /var/tmp: %w", err)
+	}
+	// Match the sticky bit even if MkdirAll honoured umask.
+	if err := os.Chmod("/var/tmp", 0o1777); err != nil {
+		return fmt.Errorf("chmod /var/tmp: %w", err)
+	}
+	return nil
 }
 
 func waitForPerm(ctx context.Context) error {
