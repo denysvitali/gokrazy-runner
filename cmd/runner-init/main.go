@@ -7,14 +7,15 @@
 //   - /perm/runner.token   one-shot GitHub registration token (chmod 0600)
 //
 // On boot it waits for /perm to be available, optionally pulls the runner
-// image, and runs it via `podman run`. Container state (the registered
-// runner identity, the workspace) lives under /perm/runner-data so that
-// re-registration is not required across reboots.
+// image, and runs the official ghcr.io/actions/actions-runner container via
+// `podman run`. The official image's entrypoint is overridden with a small
+// bash bootstrap that runs config.sh on first boot (passing the registration
+// token) and then run.sh; on subsequent boots the persisted .runner config
+// in /perm/runner-data lets us skip the registration step entirely.
 //
-// The container is expected to consume the standard environment variables
-// from the popular myoung34/github-runner image (REPO_URL, RUNNER_NAME,
-// RUNNER_TOKEN, LABELS) but the image is configurable via RUNNER_IMAGE in
-// /perm/runner.env, so any compatible image can be used.
+// /perm/runner-data is mounted as the container's /home/runner, so the
+// runner's identity, _work directory, and any persistent caches survive
+// reboots.
 package main
 
 import (
@@ -26,7 +27,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -39,13 +39,42 @@ const (
 	dataDir       = "/perm/runner-data"
 	containerName = "gokrazy-runner"
 
-	defaultImage = "docker.io/myoung34/github-runner:latest"
+	// defaultImage is the official self-hosted runner image published by the
+	// actions team. Override with IMAGE= in /perm/runner.env.
+	defaultImage = "ghcr.io/actions/actions-runner:latest"
+
+	// containerHome is where the official image keeps the runner binaries
+	// (config.sh, run.sh) and where the .runner / _work state ends up.
+	containerHome = "/home/runner"
 
 	podmanBinary = "/user/podman"
 
 	backoffMin = 5 * time.Second
 	backoffMax = 2 * time.Minute
 )
+
+// bootstrap is the in-container entrypoint we feed to `bash -c`. It registers
+// the runner on first boot (when no .runner config is present) and then
+// hands off to the official run.sh. On subsequent boots the .runner file
+// persisted in /perm/runner-data lets us skip config.sh entirely, so the
+// (one-shot) registration token is only needed once.
+const bootstrap = `set -eu
+cd ` + containerHome + `
+if [ ! -f .runner ]; then
+  if [ -z "${RUNNER_TOKEN:-}" ]; then
+    echo "no .runner config and RUNNER_TOKEN is empty" >&2
+    exit 1
+  fi
+  ./config.sh \
+    --url "$REPO_URL" \
+    --token "$RUNNER_TOKEN" \
+    --name "$RUNNER_NAME" \
+    --labels "$LABELS" \
+    --work "_work" \
+    --unattended --replace --disableupdate
+fi
+exec ./run.sh
+`
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
@@ -198,13 +227,10 @@ func buildPodmanArgs(cfg *config) []string {
 		"--privileged",
 		"--network=host",
 		"--restart=no",
-		"-v", dataDir + ":/runner",
-		"-v", filepath.Join(dataDir, "_work") + ":/runner/_work",
+		"-v", dataDir + ":" + containerHome,
 		"-e", "REPO_URL=" + cfg.URL,
 		"-e", "RUNNER_NAME=" + cfg.Name,
 		"-e", "LABELS=" + cfg.Labels,
-		"-e", "RUNNER_WORKDIR=/runner/_work",
-		"-e", "DISABLE_AUTO_UPDATE=true",
 	}
 	if cfg.Token != "" {
 		args = append(args, "-e", "RUNNER_TOKEN="+cfg.Token)
@@ -212,7 +238,11 @@ func buildPodmanArgs(cfg *config) []string {
 	for _, kv := range cfg.Extra {
 		args = append(args, "-e", kv)
 	}
-	args = append(args, cfg.Image)
+	args = append(args,
+		"--entrypoint", "/bin/bash",
+		cfg.Image,
+		"-c", bootstrap,
+	)
 	return args
 }
 

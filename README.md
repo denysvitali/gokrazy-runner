@@ -4,10 +4,11 @@ A [gokrazy](https://gokrazy.org) appliance image that boots straight into a
 GitHub Actions self-hosted runner.
 
 The runner itself is the official `actions/runner` (.NET, glibc-based), so it
-runs inside a podman container — gokrazy provides a minimal Go userspace, the
-container provides the runner's runtime dependencies. A small Go init binary
-(`runner-init`) reads configuration from `/perm`, pulls the container image,
-and supervises it.
+runs inside the upstream `ghcr.io/actions/actions-runner` container — gokrazy
+provides a minimal Go userspace, the container provides the runner's runtime
+dependencies. A small Go init binary (`runner-init`) reads configuration
+from `/perm`, pulls the container image, and supervises it (driving
+`config.sh` once for registration, then `run.sh` for every boot).
 
 Designed for **Raspberry Pi 4 / arm64**. Other arm64 SBCs work with a
 different kernel package set.
@@ -31,16 +32,22 @@ different kernel package set.
             ┌────────────────────── /perm (ext4, persistent) ─────────────────────┐
             │  /perm/runner.env                URL=… NAME=… LABELS=… IMAGE=…      │
             │  /perm/runner.token              one-shot GH registration token     │
-            │  /perm/runner-data               container's /runner mount          │
+            │  /perm/runner-data               container's /home/runner mount     │
             │  /perm/breakglass/authorized_keys                                   │
             └─────────────────────────────────────────────────────────────────────┘
 
-                                      │ podman run
+                                      │ podman run --entrypoint /bin/bash
                                       ▼
 
-            ┌─────── docker.io/myoung34/github-runner:latest (or your own) ──────┐
-            │  config.sh + run.sh, registers with GitHub, runs jobs              │
+            ┌──────────────── ghcr.io/actions/actions-runner:latest ──────────────┐
+            │  bootstrap (in runner-init): config.sh on first boot, run.sh after │
+            │  /home/runner persisted to /perm/runner-data                       │
             └────────────────────────────────────────────────────────────────────┘
+
+The official `ghcr.io/actions/actions-runner` image only ships the runner
+itself — no docker, no language toolchains. Your workflows install whatever
+they need at job time, or you can override `IMAGE=` in `/perm/runner.env`
+with a derivative image that bakes more tools in.
 ```
 
 ## Repository layout
@@ -96,10 +103,8 @@ breakglass SSH):
 URL=https://github.com/<owner>/<repo>      # or https://github.com/<org>
 NAME=my-pi4-runner
 LABELS=self-hosted,linux,arm64,gokrazy
-# Optional overrides:
-# IMAGE=docker.io/myoung34/github-runner:latest
-# EPHEMERAL=true
-# RUNNER_GROUP=Default
+# Optional override:
+# IMAGE=ghcr.io/actions/actions-runner:2.319.0  # pin to a specific version
 ```
 
 ```bash

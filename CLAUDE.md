@@ -27,14 +27,26 @@ a podman container. Target board: Raspberry Pi 4 / arm64.
 
 ## Container choice
 
-The runner image is `docker.io/myoung34/github-runner:latest` by default
-(can be overridden via `IMAGE=` in `/perm/runner.env`). It accepts the env
-vars `runner-init` produces (`REPO_URL`, `RUNNER_NAME`, `LABELS`,
-`RUNNER_TOKEN`, `RUNNER_WORKDIR`).
+The runner image is `ghcr.io/actions/actions-runner:latest` (the official
+self-hosted runner image published by the actions team). Override via
+`IMAGE=` in `/perm/runner.env` to pin a specific version or to use a
+derivative image that bakes in extra tooling.
 
-The container needs `--privileged` and `--network=host` for typical CI
-workloads (docker-in-docker, raw socket access). If your jobs don't need
-that, narrow it down in `cmd/runner-init/main.go`.
+The official image's entrypoint is `run.sh` and assumes `config.sh` has
+already been invoked. We override the entrypoint with `/bin/bash -c` and
+the inline `bootstrap` script in `cmd/runner-init/main.go`, which:
+  1. cd's into `/home/runner`,
+  2. runs `./config.sh --url ... --token ... --name ... --labels ...
+     --unattended --replace --disableupdate` if no `.runner` config exists,
+  3. exec's `./run.sh`.
+
+`/home/runner` is mounted onto `/perm/runner-data`, so the registration
+token is only consumed on the very first boot — every subsequent reboot
+reuses the persisted runner identity.
+
+The container runs `--privileged --network=host` to support typical CI
+workloads (docker-in-docker, raw devices). Tighten in `buildPodmanArgs`
+if your jobs don't need it.
 
 ## CI
 
