@@ -47,6 +47,14 @@ const (
 	// (config.sh, run.sh) and where the .runner / _work state ends up.
 	containerHome = "/home/runner"
 
+	// runnerUID/runnerGID match the `runner` user baked into the official
+	// ghcr.io/actions/actions-runner image. The container is privileged with
+	// no user-namespace remap, so host and container UIDs are identical;
+	// /perm/runner-data must be owned by 1001:1001 for the runner user to
+	// be able to cd into the bind-mounted /home/runner.
+	runnerUID = 1001
+	runnerGID = 1001
+
 	podmanBinary = "/user/podman"
 
 	backoffMin = 5 * time.Second
@@ -123,6 +131,9 @@ func runOnce(ctx context.Context) error {
 	}
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return fmt.Errorf("mkdir %s: %w", dataDir, err)
+	}
+	if err := os.Chown(dataDir, runnerUID, runnerGID); err != nil {
+		return fmt.Errorf("chown %s to %d:%d: %w", dataDir, runnerUID, runnerGID, err)
 	}
 
 	// Best-effort: remove any stale container left from a previous boot.
