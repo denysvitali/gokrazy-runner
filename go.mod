@@ -5,6 +5,7 @@ go 1.26
 require (
 	github.com/diskfs/go-diskfs v1.9.1
 	github.com/gokrazy/gokapi v0.0.0-20251205165548-0927bab199d4
+	github.com/gokrazy/updater v0.0.0-20250705135802-db129c40879c
 )
 
 require (

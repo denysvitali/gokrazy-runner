@@ -104,3 +104,11 @@ func (p *PasswordManager) IsDefault() bool {
 	defer p.mu.Unlock()
 	return p.isDefault
 }
+
+// Active returns the currently active password. Used by the OTA installer
+// to authenticate against the loopback gokrazy /update/ endpoint.
+func (p *PasswordManager) Active() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.active
+}

@@ -180,6 +180,16 @@ browser at `https://<device>:8443/`.
   been written, whether `/perm/runner-data` is populated, the binary
   version, and whether the password is still the literal default —
   handy for a smoke check after first boot.
+- **Software update**: the **Software Update** card lists every GitHub
+  release that ships an OTA squashfs and lets you install one with a
+  single click. The selected release is downloaded (gzipped squashfs),
+  streamed into the loopback gokrazy updater
+  (`http://gokrazy:<pw>@127.0.0.1/update/root`), the partitions are
+  switched, and the device reboots. Progress (download speed, percent,
+  current phase) is shown live; install history persists at
+  `/perm/ota-install-history.json`. Endpoints: `GET /api/ota/status`,
+  `POST /api/ota/install` (`{"release_tag":"…"}`; omit or set to
+  `"latest"` for the most recent release).
 
 The Web UI and the manual `/perm` flow are interchangeable: `runner-init`
 re-reads the same files either way. Pick whichever is convenient — most

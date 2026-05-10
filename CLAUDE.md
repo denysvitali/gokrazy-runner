@@ -73,7 +73,23 @@ Because runner-init polls `runner.env` every 10s, saves through the UI
 are picked up without a restart. Endpoints: `GET /` + `/static/...`
 (embedded), `GET|POST /api/config`, `POST /api/token`, `GET|POST
 /api/keys`, `POST /api/password`, `GET|POST /api/tailscale`,
-`POST /api/reboot` (gokapi), `GET /api/status`.
+`POST /api/reboot` (gokapi), `GET /api/status`, `GET /api/ota/status`,
+`POST /api/ota/install` (see `pkg/ota` below).
+
+**`pkg/ota` — GitHub-driven A/B updater.** Lists releases from
+`https://api.github.com/repos/denysvitali/gokrazy-runner/releases`,
+downloads the gzipped squashfs asset
+(`gokrazy-runner-rpi4b-root.squashfs.gz` by default), and streams it
+into the loopback gokrazy updater
+(`http://gokrazy:<password>@127.0.0.1/update/root`) using
+`github.com/gokrazy/updater`. After `StreamTo("root", ...)` it calls
+`Switch()` (flips the active partition) then `Reboot()`. The current
+gokrazy password is fetched via a `PasswordFunc` callback so the URL
+stays in sync with `/perm/gokr-pw.txt` after a password change.
+Install history persists at `/perm/ota-install-history.json` (capped
+at 20 entries). Overrides via env: `OTA_GITHUB_OWNER`,
+`OTA_GITHUB_REPO`, `OTA_RELEASE_ASSET`, `OTA_GITHUB_API_URL`,
+`OTA_GOKRAZY_UPDATE_URL`, `OTA_GOKRAZY_INSECURE`.
 
 **`cmd/tailscale-init` — one-shot, runs every boot.** Reads the auth key
 from `/perm/tailscale.authkey` (path overridable via `TS_AUTH_KEY_PATH`)

@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/denysvitali/gokrazy-runner/pkg/ota"
 	"github.com/denysvitali/gokrazy-runner/pkg/webui"
 )
 
@@ -59,6 +60,13 @@ func main() {
 		log.Fatalf("password manager: %v", err)
 	}
 
+	otaMgr, err := ota.NewManager(ota.Options{
+		Password: pm.Active,
+	})
+	if err != nil {
+		log.Fatalf("ota manager: %v", err)
+	}
+
 	srv, err := webui.NewServer(webui.ServerConfig{
 		EnvPath:          envFile,
 		TokenPath:        tokenFile,
@@ -67,6 +75,7 @@ func main() {
 		TailscaleKeyPath: webui.TailscaleAuthKeyFile,
 		PasswordMgr:      pm,
 		Version:          Version,
+		OTAMgr:           otaMgr,
 	})
 	if err != nil {
 		log.Fatalf("webui server: %v", err)

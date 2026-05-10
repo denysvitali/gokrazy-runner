@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/denysvitali/gokrazy-runner/pkg/ota"
 	"github.com/gokrazy/gokapi"
 	"github.com/gokrazy/gokapi/ondeviceapi"
 )
@@ -23,6 +24,9 @@ type ServerConfig struct {
 	PasswordMgr      *PasswordManager
 	Version          string
 	Reboot           func(ctx context.Context) error
+	// OTAMgr handles GitHub-release-driven OTA updates. Optional; when nil
+	// the /api/ota/* endpoints return 503 Service Unavailable.
+	OTAMgr *ota.Manager
 }
 
 type Server struct {
@@ -64,6 +68,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.HandleFunc("/api/password", s.handlePassword)
 	mux.HandleFunc("/api/tailscale", s.handleTailscale)
 	mux.HandleFunc("/api/reboot", s.handleReboot)
+	mux.HandleFunc("/api/ota/status", s.handleOTAStatus)
+	mux.HandleFunc("/api/ota/install", s.handleOTAInstall)
 
 	s.handler = s.logMiddleware(s.authMiddleware(s.securityHeadersMiddleware(mux)))
 	return s, nil

@@ -101,6 +101,53 @@
       </form>
     </section>
 
+    <section id="section-ota" class="card">
+      <h2>Software Update</h2>
+      <p class="hint" id="ota-summary">Loading update status…</p>
+
+      <div class="ota-grid">
+        <div class="ota-cell">
+          <div class="ota-cell-label">Current</div>
+          <div class="ota-cell-value" id="ota-current">unknown</div>
+        </div>
+        <div class="ota-cell">
+          <div class="ota-cell-label">Latest</div>
+          <div class="ota-cell-value" id="ota-latest">unknown</div>
+        </div>
+        <div class="ota-cell">
+          <div class="ota-cell-label">Active partition</div>
+          <div class="ota-cell-value" id="ota-active">—</div>
+        </div>
+        <div class="ota-cell">
+          <div class="ota-cell-label">Update target</div>
+          <div class="ota-cell-value" id="ota-target">—</div>
+        </div>
+      </div>
+
+      <div id="ota-progress-wrap" class="ota-progress" hidden>
+        <div class="ota-progress-bar"><span id="ota-progress-fill"></span></div>
+        <p class="hint" id="ota-progress-label"></p>
+      </div>
+
+      <form id="ota-form" autocomplete="off">
+        <label>
+          <span>Release</span>
+          <select id="ota-release"></select>
+        </label>
+        <p class="hint" id="ota-release-info"></p>
+        <div class="ota-actions">
+          <button type="button" id="ota-refresh" class="secondary">Check for updates</button>
+          <button type="submit" id="ota-install">Install Selected Version</button>
+        </div>
+        <p class="status" id="status-ota" aria-live="polite"></p>
+      </form>
+
+      <details id="ota-history-wrap" hidden>
+        <summary>Recent install history</summary>
+        <ul id="ota-history" class="ota-history"></ul>
+      </details>
+    </section>
+
     <section id="section-system" class="card">
       <h2>System</h2>
       <button type="button" id="reboot-button" class="danger">Reboot Device</button>
