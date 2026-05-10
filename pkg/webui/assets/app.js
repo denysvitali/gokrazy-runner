@@ -91,16 +91,32 @@ function fillKeys(payload) {
   qs("#keys-value").value = payload.keys || "";
 }
 
+function fillTailscale(payload) {
+  if (!payload) payload = {};
+  const el = qs("#tailscale-status");
+  if (!el) return;
+  if (payload.configured) {
+    el.textContent = "Auth key configured. Submitting again will replace it.";
+    el.classList.add("ok");
+    el.classList.remove("info");
+  } else {
+    el.textContent = "Auth key not configured.";
+    el.classList.remove("ok");
+  }
+}
+
 async function loadAll() {
   try {
-    const [status, config, keys] = await Promise.all([
+    const [status, config, keys, tailscale] = await Promise.all([
       getJSON("/api/status").catch(() => null),
       getJSON("/api/config").catch(() => null),
       getJSON("/api/keys").catch(() => null),
+      getJSON("/api/tailscale").catch(() => null),
     ]);
     renderStatusPill(status);
     fillConfig(config);
     fillKeys(keys);
+    fillTailscale(tailscale);
   } catch (err) {
     const pill = qs("#status-pill");
     if (pill) pill.textContent = "error loading";
@@ -158,6 +174,21 @@ function bindForms() {
       setStatus(status, "Saved.", "ok");
     } catch (err) {
       setStatus(status, err.message || "Save failed", "err");
+    }
+  });
+
+  qs("#tailscale-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const status = qs("#status-tailscale");
+    const input = qs("#ts-authkey");
+    setStatus(status, "Connecting...", "info");
+    try {
+      await postJSON("/api/tailscale", { auth_key: input.value });
+      input.value = "";
+      setStatus(status, "Connected.", "ok");
+      loadAll();
+    } catch (err) {
+      setStatus(status, err.message || "Connect failed", "err");
     }
   });
 

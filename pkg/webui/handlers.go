@@ -15,13 +15,14 @@ import (
 )
 
 type ServerConfig struct {
-	EnvPath     string
-	TokenPath   string
-	KeysPath    string
-	DataDir     string
-	PasswordMgr *PasswordManager
-	Version     string
-	Reboot      func(ctx context.Context) error
+	EnvPath          string
+	TokenPath        string
+	KeysPath         string
+	DataDir          string
+	TailscaleKeyPath string
+	PasswordMgr      *PasswordManager
+	Version          string
+	Reboot           func(ctx context.Context) error
 }
 
 type Server struct {
@@ -45,6 +46,9 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	if cfg.DataDir == "" {
 		return nil, errors.New("DataDir is required")
 	}
+	if cfg.TailscaleKeyPath == "" {
+		cfg.TailscaleKeyPath = TailscaleAuthKeyFile
+	}
 	if cfg.Reboot == nil {
 		cfg.Reboot = defaultReboot
 	}
@@ -58,6 +62,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.HandleFunc("/api/token", s.handleToken)
 	mux.HandleFunc("/api/keys", s.handleKeys)
 	mux.HandleFunc("/api/password", s.handlePassword)
+	mux.HandleFunc("/api/tailscale", s.handleTailscale)
 	mux.HandleFunc("/api/reboot", s.handleReboot)
 
 	s.handler = s.logMiddleware(s.authMiddleware(s.securityHeadersMiddleware(mux)))
@@ -126,13 +131,56 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	tailscaleConfigured, err := HasTailscaleAuthKey(s.cfg.TailscaleKeyPath)
+	if err != nil {
+		log.Printf("webui: read tailscale auth key status: %v", err)
+	}
 	resp := map[string]any{
-		"has_token":           TokenExists(s.cfg.TokenPath),
-		"has_runner_data":     dirExists(s.cfg.DataDir),
-		"version":             s.cfg.Version,
-		"password_is_default": s.cfg.PasswordMgr.IsDefault(),
+		"has_token":            TokenExists(s.cfg.TokenPath),
+		"has_runner_data":      dirExists(s.cfg.DataDir),
+		"version":              s.cfg.Version,
+		"password_is_default":  s.cfg.PasswordMgr.IsDefault(),
+		"tailscale_configured": tailscaleConfigured,
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleTailscale(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		configured, err := HasTailscaleAuthKey(s.cfg.TailscaleKeyPath)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"configured": configured,
+			"key_path":   s.cfg.TailscaleKeyPath,
+		})
+	case http.MethodPost:
+		if !requireJSON(w, r) {
+			return
+		}
+		var body struct {
+			AuthKey string `json:"auth_key"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		key := strings.TrimSpace(body.AuthKey)
+		if err := ValidateTailscaleAuthKey(key); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := ConfigureTailscale(r.Context(), s.cfg.TailscaleKeyPath, key); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {

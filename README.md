@@ -20,6 +20,8 @@ different kernel package set.
             │                                                                     │
             │  perm-init     (one-shot: grow GPT part 4, mke2fs, reboot)          │
             │  runner-init   (long-lived: read /perm/runner.env, run podman)      │
+            │  tailscale-init (one-shot: tailscale up via /perm/tailscale/authkey)│
+            │  tailscaled, tailscale  (upstream tailscale.com binaries)           │
             │  gokrazy/podman, /iptables, /nsenter   (CNI + container runtime)    │
             │  gokrazy/breakglass     (emergency SSH, key-only)                   │
             │  gokrazy/serial-busybox, /fbstatus                                  │
@@ -34,6 +36,8 @@ different kernel package set.
             │  /perm/runner.token              one-shot GH registration token     │
             │  /perm/runner-data               container's /home/runner mount     │
             │  /perm/breakglass/authorized_keys                                   │
+            │  /perm/tailscale/authkey         tailscale auth key (chmod 0600)    │
+            │  /perm/tailscale/                tailscaled state (peers, prefs)    │
             └─────────────────────────────────────────────────────────────────────┘
 
                                       │ podman run --entrypoint /bin/bash
@@ -116,6 +120,36 @@ LABELS=self-hosted,linux,arm64,gokrazy
 new files within seconds — no reboot needed. The runner's `_work` directory
 and registered identity persist in `/perm/runner-data` across reboots, so
 the registration token only needs to be supplied once.
+
+## Tailscale
+
+The image bakes in upstream `tailscale.com/cmd/tailscaled` and
+`tailscale.com/cmd/tailscale`. tailscaled persists its state under
+`/perm/tailscale/` (configured at the package level via `-statedir`), so the
+device stays authenticated across reboots.
+
+To register a new device, write a Tailscale auth key to
+`/perm/tailscale/authkey` (`chmod 0600`). On every boot, the one-shot
+`tailscale-init` service reads that file and runs:
+
+```
+/user/tailscale up --auth-key=… --hostname=$TS_HOSTNAME --ssh
+```
+
+Use a reusable auth key if you want re-auth to keep working after a wipe; a
+single-use key works fine the first time, after which the persisted state in
+`/perm/tailscale/` keeps the node connected without the key.
+
+The Web UI's **Tailscale** section accepts an auth key, validates the
+`tskey-auth-` prefix, persists it to `/perm/tailscale/authkey`, and runs
+`tailscale up` immediately so the device joins the tailnet without waiting
+for a reboot.
+
+Tunables (set in the `cmd/tailscale-init` PackageConfig `Environment`):
+
+- `TS_AUTH_KEY_PATH` — auth key file (default `/perm/tailscale/authkey`)
+- `TS_HOSTNAME` — `--hostname` value (default the gokrazy instance name)
+- `TS_TAILSCALE_UP_ARGS` — extra args appended to `tailscale up` (default `--ssh`)
 
 ## Web UI
 

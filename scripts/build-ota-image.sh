@@ -101,7 +101,24 @@ $(emit_packages_json '    ')
         "-trimpath",
         "-ldflags=${VERSION_LDFLAGS}"
       ]
-    }
+    },
+    "github.com/denysvitali/gokrazy-runner/cmd/tailscale-init": {
+      "GoBuildFlags": [
+        "-trimpath",
+        "-ldflags=${VERSION_LDFLAGS}"
+      ],
+      "Environment": [
+        "TS_AUTH_KEY_PATH=/perm/tailscale/authkey",
+        "TS_HOSTNAME=${GOKRAZY_INSTANCE}",
+        "TS_TAILSCALE_UP_ARGS=--ssh"
+      ]
+    },
+    "tailscale.com/cmd/tailscaled": {
+      "CommandLineFlags": [
+        "-statedir=/perm/tailscale"
+      ]
+    },
+    "tailscale.com/cmd/tailscale": {}
   }
 }
 EOF

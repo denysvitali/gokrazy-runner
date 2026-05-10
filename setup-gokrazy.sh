@@ -81,7 +81,20 @@ $(emit_packages_json '    ')
       }
     },
     "github.com/denysvitali/gokrazy-runner/cmd/runner-init": {},
-    "github.com/denysvitali/gokrazy-runner/cmd/runner-webui": {}
+    "github.com/denysvitali/gokrazy-runner/cmd/runner-webui": {},
+    "github.com/denysvitali/gokrazy-runner/cmd/tailscale-init": {
+      "Environment": [
+        "TS_AUTH_KEY_PATH=/perm/tailscale/authkey",
+        "TS_HOSTNAME=$INSTANCE_NAME",
+        "TS_TAILSCALE_UP_ARGS=--ssh"
+      ]
+    },
+    "tailscale.com/cmd/tailscaled": {
+      "CommandLineFlags": [
+        "-statedir=/perm/tailscale"
+      ]
+    },
+    "tailscale.com/cmd/tailscale": {}
   }
 }
 EOF

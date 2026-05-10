@@ -60,12 +60,13 @@ func main() {
 	}
 
 	srv, err := webui.NewServer(webui.ServerConfig{
-		EnvPath:     envFile,
-		TokenPath:   tokenFile,
-		KeysPath:    keysFile,
-		DataDir:     dataDir,
-		PasswordMgr: pm,
-		Version:     Version,
+		EnvPath:          envFile,
+		TokenPath:        tokenFile,
+		KeysPath:         keysFile,
+		DataDir:          dataDir,
+		TailscaleKeyPath: webui.TailscaleAuthKeyFile,
+		PasswordMgr:      pm,
+		Version:          Version,
 	})
 	if err != nil {
 		log.Fatalf("webui server: %v", err)

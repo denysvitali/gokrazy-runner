@@ -12,7 +12,12 @@ github.com/gokrazy/podman
 github.com/gokrazy/iptables
 github.com/gokrazy/nsenter
 
+# Tailscale (auto-registers with /perm/tailscale/authkey via cmd/tailscale-init)
+tailscale.com/cmd/tailscaled
+tailscale.com/cmd/tailscale
+
 # Local services
 ./cmd/perm-init
 ./cmd/runner-init
 ./cmd/runner-webui
+./cmd/tailscale-init

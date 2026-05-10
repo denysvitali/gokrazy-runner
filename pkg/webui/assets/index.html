@@ -59,6 +59,20 @@
       </form>
     </section>
 
+    <section id="section-tailscale" class="card">
+      <h2>Tailscale</h2>
+      <p class="hint" id="tailscale-status">Auth key not configured.</p>
+      <form id="tailscale-form" autocomplete="off">
+        <label>
+          <span>Auth key</span>
+          <input type="password" id="ts-authkey" name="auth_key" placeholder="tskey-auth-...">
+        </label>
+        <p class="hint">Generate a reusable auth key at <code>https://login.tailscale.com/admin/settings/keys</code>. Saving stores it under <code>/perm/tailscale/authkey</code> and runs <code>tailscale up --ssh</code> immediately.</p>
+        <button type="submit">Save &amp; Connect</button>
+        <p class="status" id="status-tailscale" aria-live="polite"></p>
+      </form>
+    </section>
+
     <section id="section-keys" class="card">
       <h2>SSH Authorized Keys</h2>
       <form id="keys-form" autocomplete="off">
