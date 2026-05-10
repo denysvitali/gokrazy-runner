@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gokrazy Runner</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Gokrazy Runner</h1>
+    <span id="status-pill" class="pill" aria-live="polite">loading...</span>
+  </header>
+
+  <main>
+    <div id="default-password-banner" class="banner banner-warn" hidden>
+      The web UI is using the default password. Change it under "Web UI Password" below.
+    </div>
+
+    <section id="section-runner" class="card">
+      <h2>GitHub Runner</h2>
+      <form id="config-form" autocomplete="off">
+        <label>
+          <span>URL <em>(required)</em></span>
+          <input type="text" id="cfg-url" name="url" required placeholder="https://github.com/owner/repo">
+        </label>
+        <label>
+          <span>Name</span>
+          <input type="text" id="cfg-name" name="name" placeholder="runner-1">
+        </label>
+        <label>
+          <span>Labels</span>
+          <input type="text" id="cfg-labels" name="labels" placeholder="self-hosted,linux,arm64">
+        </label>
+        <label>
+          <span>Image</span>
+          <input type="text" id="cfg-image" name="image" placeholder="ghcr.io/actions/actions-runner:latest">
+        </label>
+        <label>
+          <span>Extra environment variables</span>
+          <textarea id="cfg-extra" name="extra" rows="5" placeholder="KEY=VALUE&#10;OTHER=value"></textarea>
+        </label>
+        <button type="submit">Save Configuration</button>
+        <p class="status" id="status-config" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <section id="section-token" class="card">
+      <h2>Registration Token</h2>
+      <form id="token-form" autocomplete="off">
+        <label>
+          <span>Token</span>
+          <input type="password" id="tok-value" name="token" placeholder="A...">
+        </label>
+        <p class="hint">One-shot GitHub registration token. Generate it from GitHub &rarr; Settings &rarr; Actions &rarr; Runners &rarr; New self-hosted runner.</p>
+        <button type="submit">Save Token</button>
+        <p class="status" id="status-token" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <section id="section-keys" class="card">
+      <h2>SSH Authorized Keys</h2>
+      <form id="keys-form" autocomplete="off">
+        <label>
+          <span>Authorized keys (one per line)</span>
+          <textarea id="keys-value" name="keys" rows="6" placeholder="ssh-ed25519 AAAA... user@host"></textarea>
+        </label>
+        <button type="submit">Save Keys</button>
+        <p class="status" id="status-keys" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <section id="section-password" class="card">
+      <h2>Web UI Password</h2>
+      <form id="password-form" autocomplete="off">
+        <label>
+          <span>Current password</span>
+          <input type="password" id="pw-old" name="old" autocomplete="current-password">
+        </label>
+        <label>
+          <span>New password</span>
+          <input type="password" id="pw-new" name="new" autocomplete="new-password">
+        </label>
+        <button type="submit">Change Password</button>
+        <p class="status" id="status-password" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <section id="section-system" class="card">
+      <h2>System</h2>
+      <button type="button" id="reboot-button" class="danger">Reboot Device</button>
+      <p class="status" id="status-system" aria-live="polite"></p>
+    </section>
+  </main>
+</body>
+</html>

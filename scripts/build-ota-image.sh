@@ -95,6 +95,12 @@ $(emit_packages_json '    ')
         "-trimpath",
         "-ldflags=${VERSION_LDFLAGS}"
       ]
+    },
+    "github.com/denysvitali/gokrazy-runner/cmd/runner-webui": {
+      "GoBuildFlags": [
+        "-trimpath",
+        "-ldflags=${VERSION_LDFLAGS}"
+      ]
     }
   }
 }

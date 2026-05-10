@@ -31,7 +31,7 @@ when reproducing CI locally: `GOKRAZY_INSTANCE`, `GOKRAZY_PARENT_DIR`,
 
 ## Architecture
 
-Two Go binaries are baked into the gokrazy root, plus stock gokrazy
+Three Go binaries are baked into the gokrazy root, plus stock gokrazy
 packages (`podman`, `iptables`, `nsenter`, `breakglass`, `serial-busybox`,
 `fbstatus`).
 
@@ -56,10 +56,30 @@ retry. Reserved env keys (URL/REPO_URL, NAME/RUNNER_NAME, LABELS,
 IMAGE/RUNNER_IMAGE) are consumed by runner-init; everything else in
 `runner.env` is passed through to the container as `-e KEY=VALUE`.
 
+**`cmd/runner-webui` — long-lived web UI service.** Vanilla `net/http`
+server serving an embedded HTML/JS app behind HTTP Basic Auth. Listens
+on `:8443` over HTTPS using the gokrazy self-signed cert (tries
+`/etc/ssl/gokrazy-web.{pem,key.pem}` then `/perm/ssl/...`); falls back
+to `:8080` plain HTTP if no cert is readable, or if
+`WEBUI_LISTEN_HTTP_ONLY` is set. The Basic-Auth password *is* the
+gokrazy update password — read from `/perm/gokr-pw.txt`, falling back
+to `/etc/gokr-pw.txt` (the build-time seed), and finally to a literal
+`gokrazy-runner`. Changing the password from the UI rewrites
+`/perm/gokr-pw.txt` in place, so the gokrazy `/update/` endpoint and
+the runner UI stay in sync. Edits the same `/perm` files runner-init
+reads (`runner.env`, `runner.token`, `breakglass/authorized_keys`).
+Because runner-init polls `runner.env` every 10s, saves through the UI
+are picked up without a restart. Endpoints: `GET /` + `/static/...`
+(embedded), `GET|POST /api/config`, `POST /api/token`, `GET|POST
+/api/keys`, `POST /api/password`, `POST /api/reboot` (gokapi),
+`GET /api/status`.
+
 **Runtime config lives in `/perm`, not in the image.** `runner.env`
 (KEY=VALUE), `runner.token` (chmod 0600, one-shot, only consumed on the
 *first* boot — `.runner` in `/perm/runner-data` makes it idempotent
-afterwards), and `breakglass/authorized_keys`.
+afterwards), `breakglass/authorized_keys`, and `gokr-pw.txt` (the
+gokrazy update password, also used by runner-webui; falls back to the
+rootfs-baked `/etc/gokr-pw.txt` if the perm copy is missing).
 
 ## Two invariants to preserve
 

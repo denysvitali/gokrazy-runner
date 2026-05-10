@@ -1,0 +1,175 @@
+// Command runner-webui serves a small web UI for configuring the GitHub
+// Actions runner on a gokrazy appliance. It listens on :8443 over HTTPS
+// when a gokrazy TLS cert is available, otherwise on :8080 over plain HTTP.
+package main
+
+import (
+	"context"
+	"crypto/tls"
+	"errors"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/denysvitali/gokrazy-runner/pkg/webui"
+)
+
+const (
+	permRoot   = "/perm"
+	envFile    = "/perm/runner.env"
+	tokenFile  = "/perm/runner.token"
+	keysFile   = "/perm/breakglass/authorized_keys"
+	dataDir    = "/perm/runner-data"
+	pwPrimary  = "/perm/gokr-pw.txt"
+	pwFallback = "/etc/gokr-pw.txt"
+
+	defaultPassword = "gokrazy-runner"
+
+	rootCertFile = "/etc/ssl/gokrazy-web.pem"
+	rootKeyFile  = "/etc/ssl/gokrazy-web.key.pem"
+	permCertFile = "/perm/ssl/gokrazy-web.pem"
+	permKeyFile  = "/perm/ssl/gokrazy-web.key.pem"
+
+	httpPort  = "8080"
+	httpsPort = "8443"
+
+	permWaitInterval = 10 * time.Second
+	permWaitMax      = 60 * time.Second
+)
+
+var (
+	Version   = "dev"
+	BuildDate = "unknown"
+)
+
+func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	log.Printf("runner-webui starting (version=%s date=%s)", Version, BuildDate)
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
+
+	waitForPerm(ctx)
+
+	pm, err := webui.NewPasswordManager(pwPrimary, pwFallback, defaultPassword)
+	if err != nil {
+		log.Fatalf("password manager: %v", err)
+	}
+
+	srv, err := webui.NewServer(webui.ServerConfig{
+		EnvPath:     envFile,
+		TokenPath:   tokenFile,
+		KeysPath:    keysFile,
+		DataDir:     dataDir,
+		PasswordMgr: pm,
+		Version:     Version,
+	})
+	if err != nil {
+		log.Fatalf("webui server: %v", err)
+	}
+
+	useHTTPS := false
+	var certFile, keyFile string
+	if os.Getenv("WEBUI_LISTEN_HTTP_ONLY") == "" {
+		if c, k, ok := findCertPair(); ok {
+			useHTTPS = true
+			certFile, keyFile = c, k
+		} else {
+			log.Printf("warning: no TLS cert found at %s or %s; falling back to plain HTTP. Generate a cert or set WEBUI_LISTEN_HTTP_ONLY to silence this.", rootCertFile, permCertFile)
+		}
+	}
+
+	addr := ":" + httpPort
+	scheme := "http"
+	if useHTTPS {
+		addr = ":" + httpsPort
+		scheme = "https"
+	}
+
+	httpSrv := &http.Server{
+		Addr:              addr,
+		Handler:           srv.Handler(),
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
+	}
+
+	host, _ := os.Hostname()
+	if host == "" {
+		host = "<device>"
+	}
+	port := httpPort
+	if useHTTPS {
+		port = httpsPort
+	}
+	log.Printf("listening on %s://%s:%s/", scheme, host, port)
+
+	errCh := make(chan error, 1)
+	go func() {
+		if useHTTPS {
+			errCh <- httpSrv.ListenAndServeTLS(certFile, keyFile)
+		} else {
+			errCh <- httpSrv.ListenAndServe()
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		log.Printf("shutdown signal received")
+		shutdownCtx, c := context.WithTimeout(context.Background(), 10*time.Second)
+		defer c()
+		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+			log.Fatalf("shutdown: %v", err)
+		}
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("listen: %v", err)
+		}
+	}
+}
+
+func waitForPerm(ctx context.Context) {
+	deadline := time.Now().Add(permWaitMax)
+	for {
+		if _, err := os.Stat(permRoot); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			log.Printf("warning: %s not available after %s; proceeding with fallback password sources", permRoot, permWaitMax)
+			return
+		}
+		log.Printf("waiting for %s...", permRoot)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(permWaitInterval):
+		}
+	}
+}
+
+func findCertPair() (string, string, bool) {
+	for _, p := range [][2]string{{rootCertFile, rootKeyFile}, {permCertFile, permKeyFile}} {
+		if isRegularReadable(p[0]) && isRegularReadable(p[1]) {
+			return p[0], p[1], true
+		}
+	}
+	return "", "", false
+}
+
+func isRegularReadable(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	f, err := os.Open(path) // #nosec G304 -- fixed candidate paths
+	if err != nil {
+		return false
+	}
+	_ = f.Close()
+	return true
+}

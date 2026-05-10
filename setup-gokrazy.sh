@@ -80,7 +80,8 @@ $(emit_packages_json '    ')
         "/usr/local/bin/mke2fs": "$MKE2FS_BINARY"
       }
     },
-    "github.com/denysvitali/gokrazy-runner/cmd/runner-init": {}
+    "github.com/denysvitali/gokrazy-runner/cmd/runner-init": {},
+    "github.com/denysvitali/gokrazy-runner/cmd/runner-webui": {}
   }
 }
 EOF
@@ -96,4 +97,8 @@ echo "  2. Boot the device and copy your runner config to /perm:"
 echo "       /perm/breakglass/authorized_keys      ssh keys"
 echo "       /perm/runner.env                      URL=, NAME=, LABELS=, [IMAGE=]"
 echo "       /perm/runner.token                    GitHub registration token (chmod 0600)"
+echo "     Or configure everything via the web UI at https://<device>:8443/"
+echo "     (falls back to http://<device>:8080/ if no TLS cert is present)"
+echo "     The web UI password is the same as the gokrazy update password."
+echo "     (default password: gokrazy-runner)."
 echo "  3. Reboot. runner-init will pick up the config and start the runner."

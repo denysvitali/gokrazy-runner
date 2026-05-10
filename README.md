@@ -95,8 +95,8 @@ Every push to `master` triggers `.github/workflows/ota-image.yml`, which:
 
 ## Configuring a runner
 
-Once flashed and booted, write the following to `/perm` (e.g. via
-breakglass SSH):
+The easiest path is the **Web UI** (see below). If you'd rather provision
+by hand, write the following to `/perm` via breakglass SSH:
 
 ```bash
 # /perm/runner.env
@@ -112,10 +112,40 @@ LABELS=self-hosted,linux,arm64,gokrazy
 <one-shot registration token from GitHub Settings → Actions → Runners → New runner>
 ```
 
-Reboot. `runner-init` will pull the image, register with GitHub, and start
-running jobs. The runner's `_work` directory and registered identity persist
-in `/perm/runner-data` across reboots — the registration token only needs to
-be supplied once.
+`runner-init` polls `/perm/runner.env` every 10s, so it will pick up the
+new files within seconds — no reboot needed. The runner's `_work` directory
+and registered identity persist in `/perm/runner-data` across reboots, so
+the registration token only needs to be supplied once.
+
+## Web UI
+
+A small HTTP service (`cmd/runner-webui`) serves an embedded HTML/JS UI
+for everything an operator normally edits under `/perm`. It listens on
+`:8443` over HTTPS using the gokrazy self-signed certificate
+(`/etc/ssl/gokrazy-web.pem` or `/perm/ssl/gokrazy-web.pem`), and falls
+back to plain HTTP on `:8080` if no certificate is readable (or if
+`WEBUI_LISTEN_HTTP_ONLY` is set). Once the device is online, point a
+browser at `https://<device>:8443/`.
+
+- **Credentials**: HTTP Basic. The UI password *is* the gokrazy update
+  password — the same one you would type at `https://<device>/update/`.
+  It is read from `/perm/gokr-pw.txt`, falling back to the rootfs-baked
+  `/etc/gokr-pw.txt`, and finally to the literal default `gokrazy-runner`
+  if neither file exists. Changing the password from the UI rewrites
+  `/perm/gokr-pw.txt`, so `/update/` and the UI stay in sync.
+- **What you can edit**: the runner's `URL`, `NAME`, `LABELS`, `IMAGE`,
+  and arbitrary extra `KEY=VALUE` env entries (writes `/perm/runner.env`);
+  the one-shot GitHub registration token (`/perm/runner.token`); the
+  breakglass `authorized_keys`. There is also a reboot button.
+- **Status endpoint** (`GET /api/status`) reports whether a token has
+  been written, whether `/perm/runner-data` is populated, the binary
+  version, and whether the password is still the literal default —
+  handy for a smoke check after first boot.
+
+The Web UI and the manual `/perm` flow are interchangeable: `runner-init`
+re-reads the same files either way. Pick whichever is convenient — most
+people will use the UI for day-to-day changes and `scp` only for headless
+provisioning.
 
 ## Conventions
 
