@@ -21,7 +21,7 @@ go test -run TestBootBlockDevice ./pkg/perminit
 go test -v -run TestPartitionDevice ./pkg/perminit
 
 # Shellcheck (CI uses -x -S warning)
-shellcheck -x -S warning scripts/gok-common.sh scripts/build-ota-image.sh setup-gokrazy.sh .github/scripts/build-mke2fs-arm64.sh
+shellcheck -x -S warning scripts/gok-common.sh scripts/build-ota-image.sh setup-gokrazy.sh .github/scripts/build-mke2fs-arm64.sh .github/scripts/fetch-wifi-firmware.sh
 ```
 
 `make ota` shells out to `scripts/build-ota-image.sh`. Honour these env vars
@@ -160,6 +160,16 @@ keeping them separate is the whole point of the design:
 modprobe, so `brcmutil` + `brcmfmac` are located under
 `/lib/modules/<uname -r>/` and loaded via `finit_module` by hand; without
 that, `wlan0` never exists on a kernel that ships them as modules.
+
+Wi-Fi needs three things that gokrazy does not supply by default, and all
+three are wired up in *both* build scripts: `KernelPackage` pinned to
+`github.com/gokrazy/kernel.rpi` (gok's default kernel ships no
+`lib/modules` tree at all, so there is no `brcmfmac.ko` to load), the
+CYW43455 firmware fetched by `.github/scripts/fetch-wifi-firmware.sh` and
+installed under `/lib/firmware/brcm/` via `ExtraFilePaths` (neither the
+kernel nor `gokrazy/firmware` carries it, and the kernel does not embed
+it), and wifi-init itself. Removing any one of them puts the device back
+to "no Wi-Fi interfaces found".
 
 Every module load is **best-effort**, and a device with no radio is not an
 error. Kernels differ — some build brcmfmac in, some ship it as a `.ko`,

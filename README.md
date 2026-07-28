@@ -248,21 +248,30 @@ Tunables (set in the `cmd/wifi-init` PackageConfig `Environment`):
 - `WIFI_INIT_WIFI_COMMAND` — Wi-Fi client to run (default `/user/wifi`;
   set empty to bring the radio up without associating)
 
-If the UI reports **"No Wi-Fi radio detected"**, the driver never bound.
-wifi-init keeps retrying once a minute and logs which of the two causes it
-hit:
+### What the image needs for Wi-Fi to work at all
 
-- `/lib/modules/<release> does not exist: this kernel ships no loadable
-  modules` — the image's kernel package has no module tree. Pin a kernel
-  that ships `brcmfmac`, e.g. add
-  `"KernelPackage": "github.com/gokrazy/kernel.rpi"` to `config.json` in
-  `scripts/build-ota-image.sh` and rebuild.
-- `module "brcmutil" not found under /lib/modules/<release>` — the tree
-  exists but lacks the Broadcom driver; same remedy.
+Three separate pieces, and gokrazy supplies none of them by default:
 
-If neither line appears but `wlan0` still never shows up, the driver is
-built in and something else (missing firmware) is at fault — check the
-kernel log for `brcmfmac`.
+1. **The driver.** `brcmfmac.ko` comes from the kernel package's
+   `lib/modules` tree, which gokrazy copies into the root filesystem. Only
+   `github.com/gokrazy/kernel.rpi` ships one, so both build scripts pin
+   `KernelPackage` explicitly — gok's default kernel has no module tree,
+   and the symptom is `wifi-init: /lib/modules/<release> does not exist`.
+2. **The firmware.** `brcmfmac` is only a driver; the CYW43455 loads its
+   own firmware at probe time. `gokrazy/firmware` ships the VideoCore
+   bootloader blobs (`start4.elf` and friends), *not* Wi-Fi firmware, and
+   the kernel does not embed it. `.github/scripts/fetch-wifi-firmware.sh`
+   downloads the three files from RPi-Distro/firmware-nonfree at build
+   time — they are redistributable but not open source, so they are not
+   vendored — and the build installs them under `/lib/firmware/brcm/`
+   through `ExtraFilePaths`, under both the generic and the
+   `raspberrypi,4-model-b` names the driver tries.
+3. **Something to load it.** That is `wifi-init`, above.
+
+If the UI still reports **"No Wi-Fi radio detected"**, wifi-init retries
+once a minute and its log says which piece is missing; a driver that
+loaded but found no firmware shows up as `brcmfmac` errors in the kernel
+log (*Runner → Logs → kernel*).
 
 ## Tailscale
 

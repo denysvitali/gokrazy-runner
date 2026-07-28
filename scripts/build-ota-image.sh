@@ -11,6 +11,13 @@ TARGET_STORAGE_BYTES="${TARGET_STORAGE_BYTES:-}"
 IMAGE_PATH="${IMAGE_DIR}/${IMAGE_NAME}"
 MKE2FS_BINARY="${MKE2FS_BINARY:-}"
 WIFI_COUNTRY="${WIFI_COUNTRY:-CH}"
+# Pinned explicitly rather than left to gok's default: only kernel.rpi ships
+# a lib/modules tree with the Broadcom Wi-Fi driver, and gokrazy copies
+# lib/modules into the root filesystem from whatever KernelPackage names.
+# Without this the image has no brcmfmac at all and wlan0 never appears.
+KERNEL_PACKAGE="${KERNEL_PACKAGE:-github.com/gokrazy/kernel.rpi}"
+FIRMWARE_PACKAGE="${FIRMWARE_PACKAGE:-github.com/gokrazy/firmware}"
+WIFI_FIRMWARE_DIR="${WIFI_FIRMWARE_DIR:-$PWD/dist/firmware/brcm}"
 BUILD_DATE="${BUILD_DATE:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 INSTANCE_DIR="$GOKRAZY_PARENT_DIR/$GOKRAZY_INSTANCE"
@@ -44,6 +51,11 @@ fi
 
 mkdir -p "$GOKRAZY_PARENT_DIR" "$IMAGE_DIR"
 
+# brcmfmac is only the driver; the CYW43455 also needs firmware that neither
+# gokrazy package ships. Fetched at build time because it is redistributable
+# but not open source.
+"$REPO_DIR/.github/scripts/fetch-wifi-firmware.sh" "$WIFI_FIRMWARE_DIR"
+
 if [ -d "$INSTANCE_DIR" ]; then
   rm -rf "$INSTANCE_DIR"
 fi
@@ -58,6 +70,11 @@ go 1.26
 replace github.com/denysvitali/gokrazy-runner => $REPO_DIR
 EOF
 
+# The kernel and firmware packages carry no Go code, so they are not in the
+# Packages list; they still have to be requirements of the instance module so
+# gok can resolve them.
+(cd "$INSTANCE_DIR" && go get "$KERNEL_PACKAGE@latest" "$FIRMWARE_PACKAGE@latest")
+
 # shellcheck disable=SC2154 # gok_packages comes from gok-common.sh
 for pkg in "${gok_packages[@]}"; do
   gok -i "$GOKRAZY_INSTANCE" add "$pkg"
@@ -66,6 +83,8 @@ done
 cat > "$INSTANCE_DIR/config.json" <<EOF
 {
   "Hostname": "$GOKRAZY_INSTANCE",
+  "KernelPackage": "$KERNEL_PACKAGE",
+  "FirmwarePackage": "$FIRMWARE_PACKAGE",
   "Update": {
     "HTTPPort": "80",
     "HTTPSPort": "443",
@@ -132,7 +151,15 @@ $(emit_packages_json '    ')
       "Environment": [
         "WIFI_COUNTRY=${WIFI_COUNTRY}",
         "WIFI_INIT_ETHERNET_FIRST=false"
-      ]
+      ],
+      "ExtraFilePaths": {
+        "/lib/firmware/brcm/brcmfmac43455-sdio.bin": "${WIFI_FIRMWARE_DIR}/brcmfmac43455-sdio.bin",
+        "/lib/firmware/brcm/brcmfmac43455-sdio.clm_blob": "${WIFI_FIRMWARE_DIR}/brcmfmac43455-sdio.clm_blob",
+        "/lib/firmware/brcm/brcmfmac43455-sdio.txt": "${WIFI_FIRMWARE_DIR}/brcmfmac43455-sdio.txt",
+        "/lib/firmware/brcm/brcmfmac43455-sdio.raspberrypi,4-model-b.bin": "${WIFI_FIRMWARE_DIR}/brcmfmac43455-sdio.bin",
+        "/lib/firmware/brcm/brcmfmac43455-sdio.raspberrypi,4-model-b.clm_blob": "${WIFI_FIRMWARE_DIR}/brcmfmac43455-sdio.clm_blob",
+        "/lib/firmware/brcm/brcmfmac43455-sdio.raspberrypi,4-model-b.txt": "${WIFI_FIRMWARE_DIR}/brcmfmac43455-sdio.txt"
+      }
     },
     "github.com/denysvitali/gokrazy-runner/cmd/usbdev-init": {
       "GoBuildFlags": [
