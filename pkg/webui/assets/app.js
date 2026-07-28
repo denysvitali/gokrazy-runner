@@ -64,7 +64,8 @@ function toast(message, kind = "info") {
 // Formatting ----------------------------------------------------------------
 
 function formatBytes(n) {
-  if (!n || n <= 0) return "unknown";
+  if (typeof n !== "number" || Number.isNaN(n) || n < 0) return "unknown";
+  if (n === 0) return "0 B";
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
@@ -377,6 +378,8 @@ function renderSystem(sys) {
 
   renderInterfaces(qs("#overview-ifaces"), sys.interfaces);
   renderInterfaces(qs("#network-ifaces"), sys.interfaces);
+  const connectivity = summariseConnectivity(sys.interfaces);
+  setBadge("#connectivity-badge", connectivity.text, connectivity.kind);
 
   const sysDetails = qs("#system-details");
   if (sysDetails) {
@@ -393,31 +396,32 @@ function renderInterfaces(list, interfaces) {
   if (!list) return;
   list.replaceChildren();
   if (!interfaces || interfaces.length === 0) {
-    const li = document.createElement("li");
-    li.textContent = "No interfaces reported.";
-    list.appendChild(li);
+    list.appendChild(listRow({ label: "No interfaces reported.", empty: true }));
     return;
   }
   for (const ifc of interfaces) {
-    const li = document.createElement("li");
-
-    const name = document.createElement("span");
-    name.className = "iface-name";
-    name.textContent = ifc.name;
-    li.appendChild(name);
-
-    const addrs = document.createElement("span");
-    addrs.className = "iface-addrs";
-    addrs.textContent = (ifc.addresses || []).join(", ") || "no address";
-    li.appendChild(addrs);
-
     const state = document.createElement("span");
     state.className = `badge ${ifc.up ? "badge-ok" : "badge-warn"}`;
     state.textContent = ifc.up ? "up" : "down";
-    li.appendChild(state);
 
-    list.appendChild(li);
+    list.appendChild(
+      listRow({
+        label: ifc.name,
+        meta: (ifc.addresses || []).join(", ") || "no address",
+        actions: [state],
+      }),
+    );
   }
+}
+
+// summariseConnectivity names the interface actually carrying traffic, which
+// is the one question the interface list makes you work out by eye.
+function summariseConnectivity(interfaces) {
+  const routable = (interfaces || []).filter(
+    (i) => i.up && (i.addresses || []).some((a) => !a.startsWith("fe80::")),
+  );
+  if (routable.length === 0) return { text: "offline", kind: "err" };
+  return { text: routable.map((i) => i.name).join(", "), kind: "ok" };
 }
 
 async function loadSystem() {
@@ -438,18 +442,23 @@ function signalBars(dbm) {
   return "▂___";
 }
 
-function wifiListItem({ label, meta, actions }) {
+function listRow({ label, meta, actions, empty }) {
   const li = document.createElement("li");
+  if (empty) {
+    li.className = "rows-empty";
+    li.textContent = label;
+    return li;
+  }
   const text = document.createElement("span");
-  text.className = "wifi-label";
+  text.className = "row-title";
   text.textContent = label;
   li.appendChild(text);
-  if (meta) {
-    const m = document.createElement("span");
-    m.className = "wifi-meta";
-    m.textContent = meta;
-    li.appendChild(m);
-  }
+
+  const m = document.createElement("span");
+  m.className = "row-meta";
+  m.textContent = meta || "";
+  li.appendChild(m);
+
   (actions || []).forEach((btn) => li.appendChild(btn));
   return li;
 }
@@ -494,7 +503,7 @@ function fillWiFi(payload) {
   const networks = payload.networks || [];
   savedList.replaceChildren();
   if (networks.length === 0) {
-    savedList.appendChild(wifiListItem({ label: "No saved networks." }));
+    savedList.appendChild(listRow({ label: "No saved networks yet.", empty: true }));
     return;
   }
   networks.forEach((net, i) => {
@@ -502,10 +511,10 @@ function fillWiFi(payload) {
       .filter(Boolean)
       .join(" • ");
     savedList.appendChild(
-      wifiListItem({
+      listRow({
         label: net.ssid,
         meta,
-        actions: [makeButton("Forget", () => forgetWiFi(net.ssid))],
+        actions: [makeButton("Forget", () => forgetWiFi(net.ssid), "ghost")],
       }),
     );
   });
@@ -532,7 +541,7 @@ function renderScanResults(networks) {
   list.hidden = false;
 
   if (!networks || networks.length === 0) {
-    list.appendChild(wifiListItem({ label: "No networks found." }));
+    list.appendChild(listRow({ label: "No networks found.", empty: true }));
     return;
   }
 
@@ -547,17 +556,17 @@ function renderScanResults(networks) {
       .join(" • ");
 
     list.appendChild(
-      wifiListItem({
+      listRow({
         label: net.ssid,
         meta,
         actions: [
-          makeButton("Select", () => {
+          makeButton("Use", () => {
             qs("#wifi-ssid").value = net.ssid;
             const psk = qs("#wifi-psk");
             psk.value = "";
             // An open network needs no passphrase; focus the button instead.
             if (net.encrypted) psk.focus();
-          }),
+          }, "secondary"),
         ],
       }),
     );

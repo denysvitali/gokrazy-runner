@@ -8,77 +8,82 @@
   <script src="/static/app.js" defer></script>
 </head>
 <body>
+<div class="app">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">G</span>
+    <h1>Gokrazy Runner</h1>
+  </div>
+
   <header class="topbar">
-    <div class="topbar-title">
-      <h1>Gokrazy Runner</h1>
-      <span class="topbar-host" id="topbar-host"></span>
-    </div>
-    <div class="topbar-meta">
-      <span id="status-pill" class="pill" aria-live="polite">loading…</span>
-      <button type="button" id="refresh-button" class="icon-button" title="Refresh now" aria-label="Refresh now">⟳</button>
-    </div>
+    <span class="device-name" id="topbar-host"></span>
+    <span id="status-pill" class="pill" aria-live="polite">loading…</span>
+    <button type="button" id="refresh-button" class="icon-button" title="Refresh now" aria-label="Refresh now">⟳</button>
   </header>
 
-  <nav class="tabs" id="tabs" role="tablist">
-    <button type="button" class="tab" role="tab" data-tab="overview">Overview</button>
-    <button type="button" class="tab" role="tab" data-tab="runner">Runner</button>
-    <button type="button" class="tab" role="tab" data-tab="network">Network</button>
-    <button type="button" class="tab" role="tab" data-tab="system">System</button>
+  <nav class="nav" id="tabs" role="tablist" aria-label="Sections">
+    <button type="button" class="tab" role="tab" data-tab="overview"><span class="tab-dot"></span>Overview</button>
+    <button type="button" class="tab" role="tab" data-tab="runner"><span class="tab-dot"></span>Runner</button>
+    <button type="button" class="tab" role="tab" data-tab="network"><span class="tab-dot"></span>Network</button>
+    <button type="button" class="tab" role="tab" data-tab="system"><span class="tab-dot"></span>System</button>
   </nav>
 
   <main>
     <div id="default-password-banner" class="banner banner-warn" hidden>
       <span>This device still uses the default web UI password.</span>
-      <button type="button" class="link-button" data-goto="system">Change it</button>
+      <button type="button" class="ghost" data-goto="system">Change it</button>
     </div>
     <div id="setup-banner" class="banner banner-info" hidden>
       <span>No runner is configured yet. Set the repository URL and paste a registration token.</span>
-      <button type="button" class="link-button" data-goto="runner">Configure</button>
+      <button type="button" class="ghost" data-goto="runner">Configure</button>
     </div>
 
-    <!-- ================= Overview ================= -->
-    <div class="panel" id="panel-overview" role="tabpanel">
+    <!-- ============================== Overview ============================ -->
+    <div class="panel" id="panel-overview" role="tabpanel" aria-label="Overview">
       <section class="card">
         <div class="card-head">
-          <h2>Status</h2>
+          <h2>Device status</h2>
           <span class="hint" id="overview-updated"></span>
         </div>
         <div class="tiles" id="overview-tiles"></div>
       </section>
 
-      <section class="card">
-        <div class="card-head">
-          <h2>Runner container</h2>
-          <span class="badge" id="runner-badge">unknown</span>
-        </div>
-        <dl class="kv" id="runner-details"></dl>
-        <div class="row">
-          <button type="button" id="runner-restart" class="secondary">Restart container</button>
-          <button type="button" class="secondary" data-goto="runner">Edit configuration</button>
-        </div>
-        <p class="status" id="status-runner-control" aria-live="polite"></p>
-      </section>
+      <div class="panel-grid">
+        <section class="card">
+          <div class="card-head">
+            <h2>Runner container</h2>
+            <span class="badge" id="runner-badge">unknown</span>
+          </div>
+          <dl class="kv" id="runner-details"></dl>
+          <div class="actions" style="margin-top:14px">
+            <button type="button" id="runner-restart" class="secondary">Restart container</button>
+            <button type="button" class="ghost" data-goto="runner">Edit configuration</button>
+          </div>
+          <p class="status" id="status-runner-control" aria-live="polite"></p>
+        </section>
 
-      <section class="card">
-        <div class="card-head">
-          <h2>Network</h2>
-        </div>
-        <ul class="iface-list" id="overview-ifaces"></ul>
-      </section>
+        <section class="card">
+          <div class="card-head">
+            <h2>Connectivity</h2>
+            <span class="badge" id="connectivity-badge">—</span>
+          </div>
+          <ul class="rows" id="overview-ifaces"></ul>
+        </section>
+      </div>
     </div>
 
-    <!-- ================= Runner ================= -->
-    <div class="panel" id="panel-runner" role="tabpanel" hidden>
+    <!-- =============================== Runner ============================ -->
+    <div class="panel" id="panel-runner" role="tabpanel" aria-label="Runner" hidden>
       <section id="section-runner" class="card">
-        <div class="card-head"><h2>GitHub Runner</h2></div>
+        <div class="card-head"><h2>GitHub runner</h2></div>
+        <p class="card-sub">Written to <code>/perm/runner.env</code>. runner-init re-reads it within 10 seconds — no reboot needed.</p>
         <form id="config-form" autocomplete="off">
           <label>
-            <span>URL <em>(required)</em></span>
+            <span>Repository or organisation URL <em>— required</em></span>
             <input type="text" id="cfg-url" name="url" required placeholder="https://github.com/owner/repo">
           </label>
-          <p class="hint">A repository URL registers a repo runner; an organisation URL (<code>https://github.com/owner</code>) registers an org runner.</p>
+          <p class="field-hint">A repository URL registers a repo runner; <code>https://github.com/owner</code> registers an org runner.</p>
           <label>
-            <span>Name</span>
+            <span>Runner name</span>
             <input type="text" id="cfg-name" name="name" placeholder="runner-1">
           </label>
           <label>
@@ -86,30 +91,34 @@
             <input type="text" id="cfg-labels" name="labels" placeholder="self-hosted,linux,arm64">
           </label>
           <label>
-            <span>Image</span>
+            <span>Container image <em>— optional</em></span>
             <input type="text" id="cfg-image" name="image" placeholder="ghcr.io/actions/actions-runner:latest">
           </label>
           <label>
             <span>Extra environment variables</span>
-            <textarea id="cfg-extra" name="extra" rows="5" placeholder="KEY=VALUE&#10;OTHER=value"></textarea>
+            <textarea id="cfg-extra" name="extra" rows="4" placeholder="KEY=VALUE&#10;OTHER=value"></textarea>
           </label>
-          <button type="submit">Save Configuration</button>
+          <div class="actions">
+            <button type="submit">Save configuration</button>
+          </div>
           <p class="status" id="status-config" aria-live="polite"></p>
         </form>
       </section>
 
       <section id="section-token" class="card">
         <div class="card-head">
-          <h2>Registration Token</h2>
+          <h2>Registration token</h2>
           <span class="badge" id="token-badge">no token</span>
         </div>
+        <p class="card-sub">GitHub &rarr; Settings &rarr; Actions &rarr; Runners &rarr; New self-hosted runner. One-shot: it is only used the first time the runner registers.</p>
         <form id="token-form" autocomplete="off">
           <label>
             <span>Token</span>
-            <input type="password" id="tok-value" name="token" placeholder="A...">
+            <input type="password" id="tok-value" name="token" placeholder="A…">
           </label>
-          <p class="hint">One-shot GitHub registration token, from GitHub &rarr; Settings &rarr; Actions &rarr; Runners &rarr; New self-hosted runner. It is only used the first time the runner registers.</p>
-          <button type="submit">Save Token</button>
+          <div class="actions">
+            <button type="submit">Save token</button>
+          </div>
           <p class="status" id="status-token" aria-live="polite"></p>
         </form>
       </section>
@@ -122,7 +131,7 @@
             <span>Auto-refresh</span>
           </label>
         </div>
-        <div class="row">
+        <div class="actions">
           <select id="logs-source" aria-label="Log source">
             <option value="runner">Runner container</option>
             <option value="kernel">Kernel ring buffer</option>
@@ -134,40 +143,46 @@
             <option value="1000">1000 lines</option>
           </select>
           <button type="button" id="logs-refresh" class="secondary">Load</button>
-          <button type="button" id="logs-copy" class="secondary">Copy</button>
+          <button type="button" id="logs-copy" class="ghost">Copy</button>
         </div>
         <pre id="logs-output" class="log-output">Press “Load” to fetch logs.</pre>
         <p class="status" id="status-logs" aria-live="polite"></p>
       </section>
     </div>
 
-    <!-- ================= Network ================= -->
-    <div class="panel" id="panel-network" role="tabpanel" hidden>
+    <!-- ============================== Network ============================ -->
+    <div class="panel" id="panel-network" role="tabpanel" aria-label="Network" hidden>
       <section id="section-wifi" class="card">
         <div class="card-head">
           <h2>Wi-Fi</h2>
           <span class="badge" id="wifi-badge">unknown</span>
         </div>
-        <p class="hint" id="wifi-status">Loading…</p>
-        <div class="row">
-          <button type="button" id="wifi-scan">Scan for networks</button>
+        <p class="card-sub" id="wifi-status">Loading…</p>
+
+        <div class="actions">
+          <button type="button" id="wifi-scan" class="secondary">Scan for networks</button>
         </div>
-        <ul id="wifi-scan-list" class="wifi-list" hidden></ul>
+        <ul id="wifi-scan-list" class="rows" style="margin-top:12px" hidden></ul>
+
+        <h3>Connect to a network</h3>
         <form id="wifi-form" autocomplete="off">
           <label>
-            <span>Network (SSID)</span>
+            <span>Network name (SSID)</span>
             <input type="text" id="wifi-ssid" name="ssid" maxlength="32" placeholder="MyNetwork">
           </label>
           <label>
-            <span>Password</span>
-            <input type="password" id="wifi-psk" name="password" placeholder="leave empty for an open network">
+            <span>Password <em>— leave empty for an open network</em></span>
+            <input type="password" id="wifi-psk" name="password" placeholder="8–63 characters">
           </label>
-          <p class="hint">Saving writes <code>/perm/wifi.json</code>, which the gokrazy Wi-Fi client uses to associate. Ethernet wins at boot: Wi-Fi only comes up when no cable is plugged in.</p>
-          <button type="submit">Save &amp; Connect</button>
+          <p class="field-hint">Saving writes <code>/perm/wifi.json</code>; wifi-init associates within about 10 seconds. Ethernet stays the preferred route.</p>
+          <div class="actions">
+            <button type="submit">Save &amp; connect</button>
+          </div>
           <p class="status" id="status-wifi" aria-live="polite"></p>
         </form>
+
         <h3>Saved networks</h3>
-        <ul id="wifi-saved-list" class="wifi-list"></ul>
+        <ul id="wifi-saved-list" class="rows"></ul>
       </section>
 
       <section id="section-tailscale" class="card">
@@ -175,32 +190,34 @@
           <h2>Tailscale</h2>
           <span class="badge" id="tailscale-badge">not configured</span>
         </div>
-        <p class="hint" id="tailscale-status">Auth key not configured.</p>
+        <p class="card-sub" id="tailscale-status">Auth key not configured.</p>
         <form id="tailscale-form" autocomplete="off">
           <label>
             <span>Auth key</span>
-            <input type="password" id="ts-authkey" name="auth_key" placeholder="tskey-auth-...">
+            <input type="password" id="ts-authkey" name="auth_key" placeholder="tskey-auth-…">
           </label>
-          <p class="hint">Generate a reusable auth key at <code>https://login.tailscale.com/admin/settings/keys</code>. Saving stores it at <code>/perm/tailscale.authkey</code> and runs <code>tailscale up --ssh</code> immediately.</p>
-          <button type="submit">Save &amp; Connect</button>
+          <p class="field-hint">Generate a reusable key at <code>login.tailscale.com/admin/settings/keys</code>. Saving stores it at <code>/perm/tailscale.authkey</code> and runs <code>tailscale up --ssh</code> immediately.</p>
+          <div class="actions">
+            <button type="submit">Save &amp; connect</button>
+          </div>
           <p class="status" id="status-tailscale" aria-live="polite"></p>
         </form>
       </section>
 
       <section class="card">
         <div class="card-head"><h2>Interfaces</h2></div>
-        <ul class="iface-list" id="network-ifaces"></ul>
+        <ul class="rows" id="network-ifaces"></ul>
       </section>
     </div>
 
-    <!-- ================= System ================= -->
-    <div class="panel" id="panel-system" role="tabpanel" hidden>
+    <!-- =============================== System ============================ -->
+    <div class="panel" id="panel-system" role="tabpanel" aria-label="System" hidden>
       <section id="section-ota" class="card">
         <div class="card-head">
-          <h2>Software Update</h2>
+          <h2>Software update</h2>
           <span class="badge" id="ota-badge">—</span>
         </div>
-        <p class="hint" id="ota-summary">Loading update status…</p>
+        <p class="card-sub" id="ota-summary">Loading update status…</p>
 
         <div class="ota-grid">
           <div class="ota-cell">
@@ -231,10 +248,10 @@
             <span>Release</span>
             <select id="ota-release"></select>
           </label>
-          <p class="hint" id="ota-release-info"></p>
-          <div class="ota-actions">
+          <p class="field-hint" id="ota-release-info"></p>
+          <div class="actions">
+            <button type="submit" id="ota-install">Install selected version</button>
             <button type="button" id="ota-refresh" class="secondary">Check for updates</button>
-            <button type="submit" id="ota-install">Install Selected Version</button>
           </div>
           <p class="status" id="status-ota" aria-live="polite"></p>
         </form>
@@ -246,7 +263,7 @@
               <span>Image URL (gzipped squashfs)</span>
               <input type="url" id="ota-url" placeholder="https://…/gokrazy-runner-rpi4b-root.squashfs.gz" />
             </label>
-            <div class="ota-actions">
+            <div class="actions">
               <button type="submit" id="ota-url-install">Install from URL</button>
             </div>
           </form>
@@ -255,7 +272,7 @@
               <span>Upload image (.squashfs.gz, max 512 MiB)</span>
               <input type="file" id="ota-file" accept=".gz,application/gzip" />
             </label>
-            <div class="ota-actions">
+            <div class="actions">
               <button type="submit" id="ota-upload-install">Upload &amp; Install</button>
             </div>
           </form>
@@ -274,7 +291,7 @@
               <span>Token</span>
               <input type="password" id="ota-token" placeholder="github_pat_… (leave empty to remove)" />
             </label>
-            <div class="ota-actions">
+            <div class="actions">
               <button type="submit" id="ota-token-save">Save token</button>
             </div>
             <p class="status" id="status-ota-token" aria-live="polite"></p>
@@ -287,45 +304,53 @@
         </details>
       </section>
 
-      <section id="section-keys" class="card">
-        <div class="card-head"><h2>SSH Authorized Keys</h2></div>
-        <form id="keys-form" autocomplete="off">
-          <label>
-            <span>Authorized keys (one per line)</span>
-            <textarea id="keys-value" name="keys" rows="6" placeholder="ssh-ed25519 AAAA... user@host"></textarea>
-          </label>
-          <p class="hint">Used by breakglass for emergency SSH access.</p>
-          <button type="submit">Save Keys</button>
-          <p class="status" id="status-keys" aria-live="polite"></p>
-        </form>
-      </section>
+      <div class="panel-grid">
+        <section id="section-keys" class="card">
+          <div class="card-head"><h2>SSH authorized keys</h2></div>
+          <p class="card-sub">Used by breakglass for emergency SSH access.</p>
+          <form id="keys-form" autocomplete="off">
+            <label>
+              <span>One key per line</span>
+              <textarea id="keys-value" name="keys" rows="6" placeholder="ssh-ed25519 AAAA… user@host"></textarea>
+            </label>
+            <div class="actions">
+              <button type="submit">Save keys</button>
+            </div>
+            <p class="status" id="status-keys" aria-live="polite"></p>
+          </form>
+        </section>
 
-      <section id="section-password" class="card">
-        <div class="card-head"><h2>Web UI Password</h2></div>
-        <form id="password-form" autocomplete="off">
-          <label>
-            <span>Current password</span>
-            <input type="password" id="pw-old" name="old" autocomplete="current-password">
-          </label>
-          <label>
-            <span>New password</span>
-            <input type="password" id="pw-new" name="new" autocomplete="new-password">
-          </label>
-          <p class="hint">This is also the gokrazy update password used by <code>/update/</code>. Changing it here keeps both in sync; your browser will ask for the new password on the next request.</p>
-          <button type="submit">Change Password</button>
-          <p class="status" id="status-password" aria-live="polite"></p>
-        </form>
-      </section>
+        <section id="section-password" class="card">
+          <div class="card-head"><h2>Web UI password</h2></div>
+          <p class="card-sub">Also the gokrazy update password used by <code>/update/</code>. Your browser will ask for the new one on the next request.</p>
+          <form id="password-form" autocomplete="off">
+            <label>
+              <span>Current password</span>
+              <input type="password" id="pw-old" name="old" autocomplete="current-password">
+            </label>
+            <label>
+              <span>New password</span>
+              <input type="password" id="pw-new" name="new" autocomplete="new-password">
+            </label>
+            <div class="actions">
+              <button type="submit">Change password</button>
+            </div>
+            <p class="status" id="status-password" aria-live="polite"></p>
+          </form>
+        </section>
+      </div>
 
       <section id="section-system" class="card">
         <div class="card-head"><h2>Device</h2></div>
         <dl class="kv" id="system-details"></dl>
-        <div class="system-actions">
-          <button type="button" id="reboot-button" class="danger">Reboot Device</button>
+
+        <h3>Diagnostics</h3>
+        <p class="hint">Support logs include network state, container logs, recent kernel messages, and a redacted <code>runner.env</code>. Tokens, passwords, and the Tailscale auth key are never included.</p>
+        <div class="actions" style="margin-top:12px">
           <button type="button" id="support-button" class="secondary">Copy support logs</button>
           <button type="button" id="support-download" class="secondary">Download</button>
+          <button type="button" id="reboot-button" class="danger">Reboot device</button>
         </div>
-        <p class="hint">Support logs include network state, container logs, recent kernel messages, and a redacted copy of <code>runner.env</code>. Tokens, passwords, and the Tailscale auth key are never included.</p>
         <p class="status" id="status-system" aria-live="polite"></p>
         <details id="support-output-wrap" hidden>
           <summary>Support log preview</summary>
@@ -334,7 +359,8 @@
       </section>
     </div>
   </main>
+</div>
 
-  <div id="toasts" class="toasts" aria-live="polite"></div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
 </body>
 </html>
