@@ -54,11 +54,6 @@ EOF
 
 KERNEL_PACKAGE="${KERNEL_PACKAGE:-github.com/gokrazy/kernel.rpi}"
 FIRMWARE_PACKAGE="${FIRMWARE_PACKAGE:-github.com/gokrazy/firmware}"
-WIFI_FIRMWARE_DIR="${WIFI_FIRMWARE_DIR:-$SCRIPT_DIR/dist/firmware/brcm}"
-
-# The CYW43455 needs firmware that no gokrazy package ships.
-"$SCRIPT_DIR/.github/scripts/fetch-wifi-firmware.sh" "$WIFI_FIRMWARE_DIR"
-
 # kernel.rpi is the package that ships lib/modules with the Broadcom Wi-Fi
 # driver; gok's default kernel has no module tree, so wlan0 never appears.
 (cd "$INSTANCE_DIR" && go get "$KERNEL_PACKAGE@latest" "$FIRMWARE_PACKAGE@latest")
@@ -119,15 +114,7 @@ $(emit_packages_json '    ')
       "Environment": [
         "WIFI_COUNTRY=$WIFI_COUNTRY",
         "WIFI_INIT_ETHERNET_FIRST=false"
-      ],
-      "ExtraFilePaths": {
-        "/lib/firmware/brcm/brcmfmac43455-sdio.bin": "$WIFI_FIRMWARE_DIR/brcmfmac43455-sdio.bin",
-        "/lib/firmware/brcm/brcmfmac43455-sdio.clm_blob": "$WIFI_FIRMWARE_DIR/brcmfmac43455-sdio.clm_blob",
-        "/lib/firmware/brcm/brcmfmac43455-sdio.txt": "$WIFI_FIRMWARE_DIR/brcmfmac43455-sdio.txt",
-        "/lib/firmware/brcm/brcmfmac43455-sdio.raspberrypi,4-model-b.bin": "$WIFI_FIRMWARE_DIR/brcmfmac43455-sdio.bin",
-        "/lib/firmware/brcm/brcmfmac43455-sdio.raspberrypi,4-model-b.clm_blob": "$WIFI_FIRMWARE_DIR/brcmfmac43455-sdio.clm_blob",
-        "/lib/firmware/brcm/brcmfmac43455-sdio.raspberrypi,4-model-b.txt": "$WIFI_FIRMWARE_DIR/brcmfmac43455-sdio.txt"
-      }
+      ]
     },
     "github.com/denysvitali/gokrazy-runner/cmd/usbdev-init": {},
     "tailscale.com/cmd/tailscaled": {

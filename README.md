@@ -258,14 +258,10 @@ Three separate pieces, and gokrazy supplies none of them by default:
    `KernelPackage` explicitly — gok's default kernel has no module tree,
    and the symptom is `wifi-init: /lib/modules/<release> does not exist`.
 2. **The firmware.** `brcmfmac` is only a driver; the CYW43455 loads its
-   own firmware at probe time. `gokrazy/firmware` ships the VideoCore
-   bootloader blobs (`start4.elf` and friends), *not* Wi-Fi firmware, and
-   the kernel does not embed it. `.github/scripts/fetch-wifi-firmware.sh`
-   downloads the three files from RPi-Distro/firmware-nonfree at build
-   time — they are redistributable but not open source, so they are not
-   vendored — and the build installs them under `/lib/firmware/brcm/`
-   through `ExtraFilePaths`, under both the generic and the
-   `raspberrypi,4-model-b` names the driver tries.
+   own firmware at probe time. This one is already handled:
+   `github.com/gokrazy/wifi` ships `/lib/firmware/brcm/` (the 43455 and
+   43430 blobs plus `regulatory.db`) in its extra-files tar. Don't add
+   your own copies — they collide with that package and the build fails.
 3. **Something to load it.** That is `wifi-init`, above.
 
 If the UI still reports **"No Wi-Fi radio detected"**, wifi-init retries

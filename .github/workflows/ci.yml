@@ -84,5 +84,4 @@ jobs:
             scripts/gok-common.sh \
             scripts/build-ota-image.sh \
             setup-gokrazy.sh \
-            .github/scripts/build-mke2fs-arm64.sh \
-            .github/scripts/fetch-wifi-firmware.sh
+            .github/scripts/build-mke2fs-arm64.sh

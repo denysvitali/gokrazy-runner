@@ -17,7 +17,6 @@ WIFI_COUNTRY="${WIFI_COUNTRY:-CH}"
 # Without this the image has no brcmfmac at all and wlan0 never appears.
 KERNEL_PACKAGE="${KERNEL_PACKAGE:-github.com/gokrazy/kernel.rpi}"
 FIRMWARE_PACKAGE="${FIRMWARE_PACKAGE:-github.com/gokrazy/firmware}"
-WIFI_FIRMWARE_DIR="${WIFI_FIRMWARE_DIR:-$PWD/dist/firmware/brcm}"
 BUILD_DATE="${BUILD_DATE:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 INSTANCE_DIR="$GOKRAZY_PARENT_DIR/$GOKRAZY_INSTANCE"
@@ -50,11 +49,6 @@ if [ -z "$MKE2FS_BINARY" ] || [ ! -x "$MKE2FS_BINARY" ]; then
 fi
 
 mkdir -p "$GOKRAZY_PARENT_DIR" "$IMAGE_DIR"
-
-# brcmfmac is only the driver; the CYW43455 also needs firmware that neither
-# gokrazy package ships. Fetched at build time because it is redistributable
-# but not open source.
-"$REPO_DIR/.github/scripts/fetch-wifi-firmware.sh" "$WIFI_FIRMWARE_DIR"
 
 if [ -d "$INSTANCE_DIR" ]; then
   rm -rf "$INSTANCE_DIR"
@@ -151,15 +145,7 @@ $(emit_packages_json '    ')
       "Environment": [
         "WIFI_COUNTRY=${WIFI_COUNTRY}",
         "WIFI_INIT_ETHERNET_FIRST=false"
-      ],
-      "ExtraFilePaths": {
-        "/lib/firmware/brcm/brcmfmac43455-sdio.bin": "${WIFI_FIRMWARE_DIR}/brcmfmac43455-sdio.bin",
-        "/lib/firmware/brcm/brcmfmac43455-sdio.clm_blob": "${WIFI_FIRMWARE_DIR}/brcmfmac43455-sdio.clm_blob",
-        "/lib/firmware/brcm/brcmfmac43455-sdio.txt": "${WIFI_FIRMWARE_DIR}/brcmfmac43455-sdio.txt",
-        "/lib/firmware/brcm/brcmfmac43455-sdio.raspberrypi,4-model-b.bin": "${WIFI_FIRMWARE_DIR}/brcmfmac43455-sdio.bin",
-        "/lib/firmware/brcm/brcmfmac43455-sdio.raspberrypi,4-model-b.clm_blob": "${WIFI_FIRMWARE_DIR}/brcmfmac43455-sdio.clm_blob",
-        "/lib/firmware/brcm/brcmfmac43455-sdio.raspberrypi,4-model-b.txt": "${WIFI_FIRMWARE_DIR}/brcmfmac43455-sdio.txt"
-      }
+      ]
     },
     "github.com/denysvitali/gokrazy-runner/cmd/usbdev-init": {
       "GoBuildFlags": [
