@@ -17,6 +17,10 @@ import (
 
 const goZeroPseudoVersion = "v0.0.0-00010101000000-000000000000"
 
+// otaUploadDir is where uploaded images are spooled. /perm is disk-backed;
+// /tmp on gokrazy is RAM and too small for a root image.
+var otaUploadDir = "/perm"
+
 type otaReleaseCandidate struct {
 	TagName     string    `json:"tag_name"`
 	Name        string    `json:"name"`
@@ -65,10 +69,18 @@ type otaStatusResponse struct {
 	InstallHistory    []otaInstallHistoryItem `json:"install_history"`
 	UpdateAvailable   bool                    `json:"update_available"`
 	ReleasesError     string                  `json:"releases_error,omitempty"`
+	HasGitHubToken    bool                    `json:"has_github_token"`
 }
 
 type otaInstallRequest struct {
 	ReleaseTag string `json:"release_tag"`
+	// URL installs a gzipped squashfs from an arbitrary http(s) location
+	// instead of going through the GitHub releases API.
+	URL string `json:"url"`
+}
+
+type otaTokenRequest struct {
+	Token string `json:"token"`
 }
 
 func (s *Server) handleOTAStatus(w http.ResponseWriter, r *http.Request) {
@@ -86,6 +98,7 @@ func (s *Server) handleOTAStatus(w http.ResponseWriter, r *http.Request) {
 		Status:         s.cfg.OTAMgr.Status(),
 		CurrentVersion: current,
 		ABPartitions:   getABPartitions(),
+		HasGitHubToken: s.cfg.OTAMgr.HasGitHubToken(),
 	}
 	for _, name := range collectKnownVersions(s.cfg.OTAMgr, current) {
 		if name != "" {
@@ -142,12 +155,117 @@ func (s *Server) handleOTAInstall(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	status, err := s.cfg.OTAMgr.StartWithRelease(r.Context(), req.ReleaseTag)
+	var (
+		status ota.Status
+		err    error
+	)
+	if strings.TrimSpace(req.URL) != "" {
+		status, err = s.cfg.OTAMgr.StartWithURL(r.Context(), req.URL)
+	} else {
+		status, err = s.cfg.OTAMgr.StartWithRelease(r.Context(), req.ReleaseTag)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, status)
+}
+
+// maxOTAUploadBytes bounds an uploaded image. A root squashfs is well under
+// 512 MiB; anything larger is a mistake or an attempt to fill /perm.
+const maxOTAUploadBytes = 512 << 20
+
+// otaUploadDeadline bounds how long a single image upload may take.
+const otaUploadDeadline = 30 * time.Minute
+
+// handleOTAUpload accepts a gzipped squashfs image as the raw request body
+// (Content-Type: application/gzip) and installs it. The body is spooled to
+// /perm first — the install outlives the request, and /tmp is RAM on gokrazy.
+func (s *Server) handleOTAUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.cfg.OTAMgr == nil {
+		http.Error(w, "OTA manager not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Body == nil {
+		http.Error(w, "empty upload", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	// A root image is hundreds of MiB; over a slow link the upload easily
+	// outlives the server-wide 30s ReadTimeout. Push the per-request
+	// deadlines out (transparently through TLS); if the connection doesn't
+	// support deadlines we silently keep the server-wide timeout.
+	rc := http.NewResponseController(w)
+	_ = rc.SetReadDeadline(time.Now().Add(otaUploadDeadline))
+	_ = rc.SetWriteDeadline(time.Now().Add(otaUploadDeadline))
+
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if name == "" {
+		name = "uploaded image"
+	}
+
+	spool, err := os.CreateTemp(otaUploadDir, "ota-upload-*.gz")
+	if err != nil {
+		http.Error(w, fmt.Sprintf("create upload spool: %v", err), http.StatusInternalServerError)
+		return
+	}
+	spoolPath := spool.Name()
+	written, err := io.Copy(spool, io.LimitReader(r.Body, maxOTAUploadBytes+1))
+	closeErr := spool.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		os.Remove(spoolPath)
+		http.Error(w, fmt.Sprintf("store upload: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if written > maxOTAUploadBytes {
+		os.Remove(spoolPath)
+		http.Error(w, "uploaded image exceeds 512 MiB", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if written == 0 {
+		os.Remove(spoolPath)
+		http.Error(w, "empty upload", http.StatusBadRequest)
+		return
+	}
+
+	status, err := s.cfg.OTAMgr.StartWithFile(r.Context(), spoolPath, name, written)
+	if err != nil {
+		os.Remove(spoolPath)
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, status)
+}
+
+// handleOTAToken stores (or clears) the GitHub API token used to lift the
+// anonymous rate limit. The token is never returned.
+func (s *Server) handleOTAToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.cfg.OTAMgr == nil {
+		http.Error(w, "OTA manager not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	var req otaTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "invalid token request", http.StatusBadRequest)
+		return
+	}
+	if err := s.cfg.OTAMgr.SetGitHubToken(req.Token); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"has_github_token": s.cfg.OTAMgr.HasGitHubToken()})
 }
 
 func isReleaseUpdateAvailable(currentVersion, releaseTag string) bool {

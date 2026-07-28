@@ -914,6 +914,12 @@ function renderOtaStatus(payload) {
   const installBtn = qs("#ota-install");
   installBtn.disabled = running || releases.length === 0;
   qs("#ota-refresh").disabled = running;
+  qs("#ota-url-install").disabled = running;
+  qs("#ota-upload-install").disabled = running;
+  qs("#ota-token-state").textContent = payload.has_github_token ? "(configured)" : "(not set)";
+  if (payload.releases_error) {
+    qs("#ota-manual-wrap").open = true;
+  }
 
   renderOtaHistory(payload.install_history || []);
 
@@ -1012,6 +1018,71 @@ function bindOtaForm() {
       schedulePoll(500);
     } catch (err) {
       setStatus(status, err.message || "Failed to start update", "err");
+    }
+  });
+
+  qs("#ota-url-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const url = qs("#ota-url").value.trim();
+    const status = qs("#status-ota-manual");
+    if (!url) {
+      setStatus(status, "Enter an image URL first.", "err");
+      return;
+    }
+    if (!window.confirm(`Install image from ${url}?\nThe inactive partition will be flashed and the device will reboot.`)) {
+      return;
+    }
+    setStatus(status, "Starting…", "info");
+    try {
+      await postJSON("/api/ota/install", { url });
+      setStatus(status, "Update started.", "ok");
+      schedulePoll(500);
+    } catch (err) {
+      setStatus(status, err.message || "Failed to start update", "err");
+    }
+  });
+
+  qs("#ota-upload-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const status = qs("#status-ota-manual");
+    const file = qs("#ota-file").files?.[0];
+    if (!file) {
+      setStatus(status, "Pick a .squashfs.gz file first.", "err");
+      return;
+    }
+    if (!window.confirm(`Install ${file.name} (${formatBytes(file.size)})?\nThe inactive partition will be flashed and the device will reboot.`)) {
+      return;
+    }
+    setStatus(status, `Uploading ${formatBytes(file.size)}…`, "info");
+    try {
+      const resp = await fetch(`/api/ota/upload?name=${encodeURIComponent(file.name)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/gzip" },
+        body: file,
+      });
+      if (!resp.ok) {
+        throw new Error((await resp.text()).trim() || `HTTP ${resp.status}`);
+      }
+      setStatus(status, "Upload complete; installing.", "ok");
+      schedulePoll(500);
+    } catch (err) {
+      setStatus(status, err.message || "Upload failed", "err");
+    }
+  });
+
+  qs("#ota-token-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const status = qs("#status-ota-token");
+    const input = qs("#ota-token");
+    const token = input.value.trim();
+    setStatus(status, "Saving…", "info");
+    try {
+      await postJSON("/api/ota/token", { token });
+      input.value = "";
+      setStatus(status, token ? "Token saved." : "Token removed.", "ok");
+      await loadOtaStatus();
+    } catch (err) {
+      setStatus(status, err.message || "Failed to save token", "err");
     }
   });
 }

@@ -239,6 +239,48 @@
           <p class="status" id="status-ota" aria-live="polite"></p>
         </form>
 
+        <details id="ota-manual-wrap">
+          <summary>Install from URL or file</summary>
+          <form id="ota-url-form" autocomplete="off">
+            <label>
+              <span>Image URL (gzipped squashfs)</span>
+              <input type="url" id="ota-url" placeholder="https://…/gokrazy-runner-rpi4b-root.squashfs.gz" />
+            </label>
+            <div class="ota-actions">
+              <button type="submit" id="ota-url-install">Install from URL</button>
+            </div>
+          </form>
+          <form id="ota-upload-form" autocomplete="off">
+            <label>
+              <span>Upload image (.squashfs.gz, max 512 MiB)</span>
+              <input type="file" id="ota-file" accept=".gz,application/gzip" />
+            </label>
+            <div class="ota-actions">
+              <button type="submit" id="ota-upload-install">Upload &amp; Install</button>
+            </div>
+          </form>
+          <p class="status" id="status-ota-manual" aria-live="polite"></p>
+        </details>
+
+        <details id="ota-token-wrap">
+          <summary>GitHub API token <span id="ota-token-state" class="hint"></span></summary>
+          <p class="hint">
+            Anonymous GitHub API requests are limited to 60/hour per IP. A read-only
+            token (no scopes needed for public repos) raises that to 5000/hour.
+            Stored at <code>/perm/github.token</code>, never shown again.
+          </p>
+          <form id="ota-token-form" autocomplete="off">
+            <label>
+              <span>Token</span>
+              <input type="password" id="ota-token" placeholder="github_pat_… (leave empty to remove)" />
+            </label>
+            <div class="ota-actions">
+              <button type="submit" id="ota-token-save">Save token</button>
+            </div>
+            <p class="status" id="status-ota-token" aria-live="polite"></p>
+          </form>
+        </details>
+
         <details id="ota-history-wrap" hidden>
           <summary>Recent install history</summary>
           <ul id="ota-history" class="ota-history"></ul>

@@ -85,6 +85,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.HandleFunc("/api/reboot", s.handleReboot)
 	mux.HandleFunc("/api/ota/status", s.handleOTAStatus)
 	mux.HandleFunc("/api/ota/install", s.handleOTAInstall)
+	mux.HandleFunc("/api/ota/upload", s.handleOTAUpload)
+	mux.HandleFunc("/api/ota/token", s.handleOTAToken)
 	mux.HandleFunc("/api/support", s.handleSupport)
 	mux.HandleFunc("/api/system", s.handleSystem)
 	mux.HandleFunc("/api/logs", s.handleLogs)

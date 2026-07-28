@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -105,6 +106,9 @@ type Options struct {
 	AssetName   string
 	APIURL      string
 	HistoryPath string
+	// TokenPath is the file holding an optional GitHub API token.
+	// Defaults to DefaultTokenPath.
+	TokenPath string
 	// Password returns the current gokrazy update password (used to build
 	// http://gokrazy:<pw>@127.0.0.1/). Required unless Installer is set.
 	Password PasswordFunc
@@ -120,6 +124,7 @@ type Manager struct {
 	assetName   string
 	apiURL      string
 	historyPath string
+	tokenPath   string
 
 	httpClient *http.Client
 	password   PasswordFunc
@@ -129,6 +134,7 @@ type Manager struct {
 	mu             sync.Mutex
 	status         Status
 	installHistory []InstallHistoryEntry
+	cache          releaseCache
 }
 
 type Status struct {
@@ -184,6 +190,7 @@ func NewManager(opts Options) (*Manager, error) {
 	asset := valueDefault(opts.AssetName, envDefault("OTA_RELEASE_ASSET", DefaultAssetName))
 	api := valueDefault(opts.APIURL, envDefault("OTA_GITHUB_API_URL", DefaultGitHubAPIURL))
 	histPath := valueDefault(opts.HistoryPath, DefaultHistoryPath)
+	tokenPath := valueDefault(opts.TokenPath, envDefault("OTA_GITHUB_TOKEN_PATH", DefaultTokenPath))
 
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
@@ -198,6 +205,7 @@ func NewManager(opts Options) (*Manager, error) {
 		assetName:      asset,
 		apiURL:         api,
 		historyPath:    histPath,
+		tokenPath:      tokenPath,
 		httpClient:     httpClient,
 		password:       opts.Password,
 		installer:      opts.Installer,
@@ -377,14 +385,21 @@ func (m *Manager) run(ctx context.Context, releaseTag string) {
 		TotalBytes:      asset.Size,
 	})
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, asset.BrowserDownloadURL, nil)
+	m.downloadAndInstall(ctx, asset.BrowserDownloadURL, asset.Size)
+}
+
+// downloadAndInstall fetches downloadURL and streams it into the updater.
+// The caller is responsible for having set the "downloading" status first.
+func (m *Manager) downloadAndInstall(ctx context.Context, downloadURL string, expectedSize int64) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		m.fail(err)
 		return
 	}
-	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
+	if token := m.githubToken(); token != "" && isGitHubHost(downloadURL) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
+	req.Header.Set("User-Agent", userAgent)
 	resp, err := m.httpClient.Do(req)
 	if err != nil {
 		m.fail(fmt.Errorf("download OTA asset: %w", err))
@@ -392,15 +407,20 @@ func (m *Manager) run(ctx context.Context, releaseTag string) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		m.fail(fmt.Errorf("download OTA asset: GitHub returned %s", resp.Status))
+		m.fail(fmt.Errorf("download OTA asset: %s returned %s", downloadURL, resp.Status))
 		return
 	}
 
-	totalBytes := asset.Size
+	totalBytes := expectedSize
 	if totalBytes <= 0 && resp.ContentLength > 0 {
 		totalBytes = resp.ContentLength
 	}
-	body := newDownloadProgressReader(resp.Body, totalBytes, m.updateDownloadProgress)
+	m.installStream(ctx, resp.Body, totalBytes)
+}
+
+// installStream gunzips r and streams it into the gokrazy updater.
+func (m *Manager) installStream(ctx context.Context, r io.Reader, totalBytes int64) {
+	body := newDownloadProgressReader(r, totalBytes, m.updateDownloadProgress)
 
 	gz, err := gzip.NewReader(body)
 	if err != nil {
@@ -457,34 +477,80 @@ func (m *Manager) AvailableReleases(ctx context.Context) ([]Release, error) {
 	return filtered, nil
 }
 
+// fetchReleases lists releases, reusing the cached listing for
+// releaseCacheTTL and revalidating with an ETag afterwards. GitHub does not
+// charge 304 responses against the rate limit, and a stale cache is still
+// served when the API errors out (rate limiting included) so the UI keeps
+// working.
 func (m *Manager) fetchReleases(ctx context.Context) ([]Release, error) {
+	m.mu.Lock()
+	cached := m.cache
+	m.mu.Unlock()
+
+	if len(cached.releases) > 0 && time.Since(cached.fetchedAt) < releaseCacheTTL {
+		return cached.releases, nil
+	}
+
 	apiURL := strings.TrimRight(m.apiURL, "/")
 	reqURL := fmt.Sprintf("%s/repos/%s/%s/releases?per_page=50", apiURL, url.PathEscape(m.owner), url.PathEscape(m.repo))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "gokrazy-runner-ota")
-	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	setGitHubHeaders(req, m.githubToken())
+	if cached.etag != "" && len(cached.releases) > 0 {
+		req.Header.Set("If-None-Match", cached.etag)
 	}
 
 	resp, err := m.httpClient.Do(req)
 	if err != nil {
+		if len(cached.releases) > 0 {
+			return cached.releases, nil
+		}
 		return nil, fmt.Errorf("fetch GitHub releases: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotModified && len(cached.releases) > 0 {
+		m.mu.Lock()
+		m.cache.fetchedAt = time.Now()
+		m.mu.Unlock()
+		return cached.releases, nil
+	}
 	if resp.StatusCode != http.StatusOK {
+		if len(cached.releases) > 0 {
+			return cached.releases, nil
+		}
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("fetch GitHub releases: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("fetch GitHub releases: %s: %s%s", resp.Status, strings.TrimSpace(string(body)), rateLimitHint(resp))
 	}
 
 	var releases []Release
 	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
 		return nil, fmt.Errorf("decode GitHub releases: %w", err)
 	}
+
+	m.mu.Lock()
+	m.cache = releaseCache{releases: releases, etag: resp.Header.Get("ETag"), fetchedAt: time.Now()}
+	m.mu.Unlock()
 	return releases, nil
+}
+
+// rateLimitHint turns a 403/429 rate-limit response into actionable advice.
+func rateLimitHint(resp *http.Response) string {
+	if resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusTooManyRequests {
+		return ""
+	}
+	if resp.Header.Get("X-RateLimit-Remaining") != "0" {
+		return ""
+	}
+	hint := " (GitHub API rate limit exhausted"
+	if reset := resp.Header.Get("X-RateLimit-Reset"); reset != "" {
+		if secs, err := strconv.ParseInt(reset, 10, 64); err == nil {
+			hint += fmt.Sprintf("; resets at %s", time.Unix(secs, 0).UTC().Format(time.RFC3339))
+		}
+	}
+	return hint + "; add a GitHub token in Settings, or install from a URL/upload)"
 }
 
 func (m *Manager) set(status Status) {

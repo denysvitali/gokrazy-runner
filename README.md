@@ -347,6 +347,25 @@ point a browser at `https://<device>:8443/`.
   `/perm/ota-install-history.json`. Endpoints: `GET /api/ota/status`,
   `POST /api/ota/install` (`{"release_tag":"…"}`; omit or set to
   `"latest"` for the most recent release).
+- **Avoiding GitHub rate limits**: anonymous GitHub API requests are
+  capped at 60/hour *per IP* (shared NATs burn that fast), which shows up
+  as `Could not fetch releases: … 403 API rate limit exceeded`. Three
+  ways around it, in order of least effort:
+  1. Nothing — the release listing is cached for 15 minutes and
+     revalidated with an `ETag` (304s are free), and the last good
+     listing is still served when the API errors out.
+  2. Store a GitHub token: *Software Update → GitHub API token*, or
+     `echo <token> > /perm/github.token && chmod 0600 /perm/github.token`
+     (`GITHUB_TOKEN` in the environment also works, but the file wins).
+     No scopes are needed for public repos; the limit becomes 5000/hour.
+     `POST /api/ota/token` with `{"token":"…"}` — an empty token removes
+     it. The token is never returned by the API.
+  3. Skip GitHub entirely: *Software Update → Install from URL or file*
+     accepts a direct URL to a gzipped squashfs
+     (`POST /api/ota/install` with `{"url":"https://…"}`), or an upload
+     of the image from your machine (`POST /api/ota/upload?name=…` with
+     the raw gzip as the request body, max 512 MiB). Uploads are spooled
+     to `/perm` and deleted once the install finishes.
 
 The Web UI and the manual `/perm` flow are interchangeable: `runner-init`
 re-reads the same files either way. Pick whichever is convenient — most

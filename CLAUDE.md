@@ -88,7 +88,7 @@ are picked up without a restart. Endpoints: `GET /` + `/static/...`
 (embedded), `GET|POST /api/config`, `POST /api/token`, `GET|POST
 /api/keys`, `POST /api/password`, `GET|POST /api/tailscale`,
 `POST /api/reboot` (gokapi), `GET /api/status`, `GET /api/ota/status`,
-`POST /api/ota/install` (see `pkg/ota` below), `GET /api/wifi/status`,
+`POST /api/ota/{install,upload,token}` (see `pkg/ota` below), `GET /api/wifi/status`,
 `POST /api/wifi/{scan,connect,forget,reorder}` (503 when the device has no
 radio; the saved-network response carries `has_password`, never the PSK),
 `GET /api/system`, `GET /api/logs`, `POST /api/runner/restart`.
@@ -125,7 +125,17 @@ into the loopback gokrazy updater
 gokrazy password is fetched via a `PasswordFunc` callback so the URL
 stays in sync with `/perm/gokr-pw.txt` after a password change.
 Install history persists at `/perm/ota-install-history.json` (capped
-at 20 entries). Overrides via env: `OTA_GITHUB_OWNER`,
+at 20 entries).
+
+The release listing is cached in-memory for 15 minutes and revalidated
+with an `ETag` (GitHub doesn't charge 304s), and a stale cache is served
+whenever the API errors — anonymous requests are limited to 60/h/IP and
+a polling browser tab used to exhaust that. An optional token at
+`/perm/github.token` (falling back to `$GITHUB_TOKEN`) raises the limit
+to 5000/h; it's only attached to GitHub hosts. Two GitHub-free install
+paths exist: `StartWithURL` (any http(s) gzipped squashfs) and
+`StartWithFile` (an upload the webui spools to `/perm`, then deletes).
+Overrides via env: `OTA_GITHUB_OWNER`,
 `OTA_GITHUB_REPO`, `OTA_RELEASE_ASSET`, `OTA_GITHUB_API_URL`,
 `OTA_GOKRAZY_UPDATE_URL`, `OTA_GOKRAZY_INSECURE`.
 
@@ -193,7 +203,8 @@ afterwards), `breakglass/authorized_keys`, `gokr-pw.txt` (the
 gokrazy update password, also used by runner-webui; falls back to the
 rootfs-baked `/etc/gokr-pw.txt` if the perm copy is missing), and
 `wifi.json` + `extra-wifi.json` (chmod 0600; see `pkg/wifimanager`), and
-`tailscale.authkey` (chmod 0600; flat file at the `/perm/` root —
+`github.token` (chmod 0600; optional, lifts the OTA GitHub API rate
+limit), and `tailscale.authkey` (chmod 0600; flat file at the `/perm/` root —
 tailscaled's state lives in `/perm/tailscale/`, kept separate because
 gokrazy's bind-mount of `-statedir` is read-only for other services).
 

@@ -1,13 +1,18 @@
 package webui
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/denysvitali/gokrazy-runner/pkg/ota"
 )
@@ -24,8 +29,12 @@ func (fakeInstaller) InstallRoot(ctx context.Context, r io.Reader, p ota.Install
 func newOTATestServer(t *testing.T) *Server {
 	t.Helper()
 	s, _, _ := newTestServer(t)
+	dir := t.TempDir()
+	otaUploadDir = dir
+	t.Cleanup(func() { otaUploadDir = "/perm" })
 	mgr, err := ota.NewManager(ota.Options{
 		HistoryPath: "", // no persistence in tests
+		TokenPath:   filepath.Join(dir, "github.token"),
 		Installer:   fakeInstaller{},
 	})
 	if err != nil {
@@ -122,15 +131,100 @@ func TestIsKnownInstalledVersion(t *testing.T) {
 
 func TestParseRootPartition(t *testing.T) {
 	cases := map[string]int{
-		"PARTUUID=12345678-02":            2,
-		"PARTUUID=12345678-03":            3,
+		"PARTUUID=12345678-02":             2,
+		"PARTUUID=12345678-03":             3,
 		"PARTUUID=2e18c40c-02/PARTNROFF=1": 2, // base + offset 1 = part 2
-		"/dev/mmcblk0p2":                  2,
-		"/dev/sda3":                       3,
+		"/dev/mmcblk0p2":                   2,
+		"/dev/sda3":                        3,
 	}
 	for in, want := range cases {
 		if got := parseRootPartition(in); got != want {
 			t.Errorf("parseRootPartition(%q)=%d want %d", in, got, want)
 		}
+	}
+}
+
+func TestOTATokenRoundTrip(t *testing.T) {
+	s := newOTATestServer(t)
+
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, authReq(t, "POST", "/api/ota/token", map[string]string{"token": "ghp_test"}, "correct-horse", "application/json"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("save token: got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !s.cfg.OTAMgr.HasGitHubToken() {
+		t.Fatal("token was not persisted")
+	}
+
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, authReq(t, "GET", "/api/ota/status", nil, "correct-horse", ""))
+	if body := rr.Body.String(); !strings.Contains(body, `"has_github_token":true`) {
+		t.Fatalf("status does not report the token: %s", body)
+	}
+	if strings.Contains(rr.Body.String(), "ghp_test") {
+		t.Fatal("status leaked the token")
+	}
+
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, authReq(t, "POST", "/api/ota/token", map[string]string{"token": ""}, "correct-horse", "application/json"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("clear token: got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if s.cfg.OTAMgr.HasGitHubToken() {
+		t.Fatal("token was not cleared")
+	}
+}
+
+func TestOTAUploadInstallsImage(t *testing.T) {
+	s := newOTATestServer(t)
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write([]byte("root-image")); err != nil {
+		t.Fatalf("gzip: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/api/ota/upload?name=root.squashfs.gz", bytes.NewReader(buf.Bytes()))
+	req.SetBasicAuth("admin", "correct-horse")
+	req.Header.Set("Content-Type", "application/gzip")
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("upload: got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if s.cfg.OTAMgr.Status().State == "installed" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("install did not finish, state=%q", s.cfg.OTAMgr.Status().State)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	entries, err := os.ReadDir(otaUploadDir)
+	if err != nil {
+		t.Fatalf("read spool dir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "ota-upload-") {
+			t.Fatalf("spool file %s was not cleaned up", e.Name())
+		}
+	}
+}
+
+func TestOTAUploadRejectsEmptyBody(t *testing.T) {
+	s := newOTATestServer(t)
+	req := httptest.NewRequest("POST", "/api/ota/upload", bytes.NewReader(nil))
+	req.SetBasicAuth("admin", "correct-horse")
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
