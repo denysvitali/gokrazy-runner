@@ -90,7 +90,29 @@ are picked up without a restart. Endpoints: `GET /` + `/static/...`
 `POST /api/reboot` (gokapi), `GET /api/status`, `GET /api/ota/status`,
 `POST /api/ota/install` (see `pkg/ota` below), `GET /api/wifi/status`,
 `POST /api/wifi/{scan,connect,forget,reorder}` (503 when the device has no
-radio; the saved-network response carries `has_password`, never the PSK).
+radio; the saved-network response carries `has_password`, never the PSK),
+`GET /api/system`, `GET /api/logs`, `POST /api/runner/restart`.
+
+The front end (`pkg/webui/assets/`) is a hand-written tabbed app —
+Overview / Runner / Network / System, tab held in the URL fragment. No
+build step and no dependencies: `index.html` + `app.js` + `style.css` are
+embedded via `pkg/webui/static.go`, so editing them is enough. Overview
+polls `/api/system` every 10s and skips the poll while
+`document.hidden`, because a Pi 4 running a CI job has no spare cycles for
+a background tab.
+
+**`pkg/webui/system.go` — device telemetry.** `GET /api/system` reads
+procfs/sysfs directly (`/proc/{uptime,loadavg,meminfo}`,
+`/sys/class/thermal/thermal_zone0/temp`, `/proc/device-tree/model`, which
+is NUL-terminated) plus `statfs` for `/` and `/perm`, and shells out to
+`podman ps --format json` for the runner container's state. Anything that
+fails degrades to an omitted field rather than an error: a missing thermal
+zone yields a nil `cpu_temp_c` so the UI hides the tile instead of
+claiming 0 °C. `GET /api/logs` tails `podman logs` or `/dev/kmsg`, clamped
+to 2000 lines so a caller can't make the device buffer an unbounded log.
+`POST /api/runner/restart` is `podman rm -f <container>` — runner-init's
+supervisor loop turns that into a restart. All three take their paths and
+subprocess runner from `SystemOptions`, which is what the tests inject.
 
 **`pkg/ota` — GitHub-driven A/B updater.** Lists releases from
 `https://api.github.com/repos/denysvitali/gokrazy-runner/releases`,

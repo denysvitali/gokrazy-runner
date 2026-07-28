@@ -309,6 +309,23 @@ point a browser at `https://<device>:8443/`.
   and arbitrary extra `KEY=VALUE` env entries (writes `/perm/runner.env`);
   the one-shot GitHub registration token (`/perm/runner.token`); the
   breakglass `authorized_keys`. There is also a reboot button.
+- **Layout**: four tabs — **Overview** (live device + runner status),
+  **Runner** (configuration, registration token, log viewer), **Network**
+  (Wi-Fi, Tailscale, interfaces), and **System** (updates, SSH keys,
+  password, reboot, support logs). The tab is kept in the URL fragment, so
+  `https://<device>:8443/#network` links straight to the Wi-Fi card.
+- **Overview** polls `GET /api/system` every 10s (paused while the browser
+  tab is hidden) and shows the runner container state, uptime, load
+  average, CPU temperature, memory, and free space on `/` and `/perm`,
+  with the temperature and usage meters turning amber/red as they approach
+  throttling or a full disk. It also lists every non-loopback interface
+  with its addresses and link state. **Restart container** force-removes
+  the runner container (`POST /api/runner/restart`); runner-init starts a
+  fresh one within its backoff window.
+- **Log viewer** (`GET /api/logs?source=runner|kernel&lines=N`, max 2000
+  lines): tails the runner container log or the kernel ring buffer, with
+  an auto-refresh toggle (5s, and only while the Runner tab is open) and a
+  copy button.
 - **Status endpoint** (`GET /api/status`) reports whether a token has
   been written, whether `/perm/runner-data` is populated, the binary
   version, and whether the password is still the literal default —

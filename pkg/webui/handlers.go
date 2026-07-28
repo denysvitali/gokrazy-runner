@@ -34,6 +34,9 @@ type ServerConfig struct {
 	// Support overrides the diagnostics endpoint defaults. Zero values
 	// are filled in at request time.
 	Support SupportOptions
+	// System overrides the /api/system and /api/logs defaults. Zero values
+	// are filled in at request time.
+	System SystemOptions
 }
 
 type Server struct {
@@ -83,6 +86,9 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.HandleFunc("/api/ota/status", s.handleOTAStatus)
 	mux.HandleFunc("/api/ota/install", s.handleOTAInstall)
 	mux.HandleFunc("/api/support", s.handleSupport)
+	mux.HandleFunc("/api/system", s.handleSystem)
+	mux.HandleFunc("/api/logs", s.handleLogs)
+	mux.HandleFunc("/api/runner/restart", s.handleRunnerRestart)
 
 	s.handler = s.logMiddleware(s.authMiddleware(s.securityHeadersMiddleware(mux)))
 	return s, nil
