@@ -468,12 +468,24 @@ function fillWiFi(payload) {
     return;
   }
 
-  if (payload.connected) {
+  if (payload.has_radio === false) {
+    // Distinguish a driver that never loaded from a radio that is simply
+    // idle: the fix for the former is in the wifi-init logs, not here.
+    statusEl.textContent =
+      "No Wi-Fi radio detected. The driver did not load — check the wifi-init service logs.";
+    statusEl.classList.remove("ok");
+    setBadge("#wifi-badge", "no radio", "err");
+    qs("#wifi-scan").disabled = true;
+    // Saved networks are still rendered below: they can be edited now and
+    // will take effect once the radio comes back.
+  } else if (payload.connected) {
+    qs("#wifi-scan").disabled = false;
     const iface = payload.interface ? ` on ${payload.interface}` : "";
     statusEl.textContent = `Connected to ${payload.ssid}${iface} (${payload.signal} dBm).`;
     statusEl.classList.add("ok");
     setBadge("#wifi-badge", payload.ssid, "ok");
   } else {
+    qs("#wifi-scan").disabled = false;
     statusEl.textContent = "Not connected to a Wi-Fi network.";
     statusEl.classList.remove("ok");
     setBadge("#wifi-badge", "not connected", null);

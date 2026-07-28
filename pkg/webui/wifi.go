@@ -18,6 +18,7 @@ type WiFiManager interface {
 	ReorderNetworks(orderedSSIDs []string) error
 	ScanNetworks() ([]wifimanager.ScanResult, error)
 	GetCurrentConnection() (*wifimanager.ConnectionInfo, error)
+	HasRadio() bool
 }
 
 // SavedNetwork is the API view of a saved network. The PSK is deliberately
@@ -56,6 +57,7 @@ func (s *Server) handleWiFiStatus(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"connected": false,
 		"networks":  safe,
+		"has_radio": mgr.HasRadio(),
 	}
 	if conn, err := mgr.GetCurrentConnection(); err == nil && conn != nil {
 		resp["connected"] = true

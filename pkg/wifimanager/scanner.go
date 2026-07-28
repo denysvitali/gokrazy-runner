@@ -31,6 +31,12 @@ var (
 	}
 )
 
+// ErrNoRadio means nl80211 reported zero Wi-Fi interfaces. On gokrazy that
+// almost always means the driver was never loaded (no udev, no modprobe) —
+// wifi-init is what binds brcmfmac and brings wlan0 up — rather than that
+// the board has no radio at all.
+var ErrNoRadio = errors.New("no Wi-Fi interfaces found: the radio driver is not loaded (check the wifi-init service logs)")
+
 // ScanResult is one SSID visible to the radio.
 type ScanResult struct {
 	SSID      string `json:"ssid"`
@@ -68,7 +74,7 @@ func (m *Manager) ScanNetworks() ([]ScanResult, error) {
 		return nil, fmt.Errorf("list Wi-Fi interfaces: %w", err)
 	}
 	if len(interfaces) == 0 {
-		return nil, errors.New("no Wi-Fi interfaces found")
+		return nil, ErrNoRadio
 	}
 
 	networksMap := make(map[string]ScanResult)
@@ -205,6 +211,19 @@ func convertSignalToDBM(signalMBm int32, signalPercent uint32) int {
 		pct = 100
 	}
 	return -100 + int(pct)*60/100
+}
+
+// HasRadio reports whether nl80211 exposes at least one Wi-Fi interface.
+// Used by the web UI to distinguish "no radio" from "scan failed".
+func (m *Manager) HasRadio() bool {
+	cl, err := newScanClient()
+	if err != nil {
+		return false
+	}
+	defer scanClientCloseFn(cl)
+
+	interfaces, err := cl.Interfaces()
+	return err == nil && len(interfaces) > 0
 }
 
 // GetCurrentConnection returns the active association, or an error when the

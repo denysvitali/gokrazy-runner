@@ -1,27 +1,38 @@
-// wifi-init is a one-shot service that brings the Wi-Fi radio up and then
-// hands off to github.com/gokrazy/wifi, which associates using
-// /perm/wifi.json.
+// wifi-init brings the Wi-Fi radio up and supervises
+// github.com/gokrazy/wifi, which associates using /perm/wifi.json.
 //
 // gokrazy has no udev and no modprobe, so the brcmfmac driver for the
 // Raspberry Pi 4's on-board radio is never auto-loaded: without this service
-// wlan0 simply does not exist. We load the modules by hand, set the
-// regulatory domain (channels above 11 are otherwise unusable), disable
-// power save, and exec the gokrazy Wi-Fi client.
+// wlan0 simply does not exist. We load the modules by hand, bring the link
+// administratively up, set the regulatory domain (channels above 11 are
+// otherwise unusable), and disable power save.
 //
-// A runner is normally on Ethernet, so by default we wait briefly for an
-// Ethernet carrier and skip Wi-Fi entirely when one appears — a wired link
-// is faster and more reliable for CI. Set WIFI_INIT_ETHERNET_FIRST=false to
-// always bring Wi-Fi up.
+// The radio is brought up unconditionally, even when the device is on
+// Ethernet and no network is saved yet. That is what makes the web UI's
+// "scan" button work: an operator reaching the UI over Ethernet has to be
+// able to see the nearby networks before they can pick one. Scanning needs
+// a driver bound and the link UP; anything less reports "no Wi-Fi
+// interfaces found".
+//
+// Associating is separate. wifi-init then supervises the Wi-Fi client for
+// as long as a network is configured, restarting it with backoff and
+// picking up a /perm/wifi.json written by the web UI without a reboot. Set
+// WIFI_INIT_ETHERNET_FIRST=true to suppress associating while eth0 has a
+// carrier.
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
 	"net"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mdlayher/genetlink"
@@ -33,12 +44,20 @@ import (
 var Version = "dev"
 
 const (
-	defaultInterface       = "wlan0"
-	defaultTimeout         = 15 * time.Second
-	defaultCountry         = "CH"
-	defaultEthernetIface   = "eth0"
-	defaultEthernetTimeout = 10 * time.Second
-	defaultWiFiCommand     = "/user/wifi"
+	defaultInterface      = "wlan0"
+	defaultTimeout        = 15 * time.Second
+	defaultCountry        = "CH"
+	defaultEthernetIface  = "eth0"
+	defaultWiFiCommand    = "/user/wifi"
+	defaultWiFiConfigPath = "/perm/wifi.json"
+
+	// configPollInterval is how often we re-read /perm/wifi.json while no
+	// network is configured, so a save from the web UI takes effect without
+	// a reboot.
+	configPollInterval = 10 * time.Second
+
+	minBackoff = 5 * time.Second
+	maxBackoff = 2 * time.Minute
 )
 
 type kernelModule struct {
@@ -58,37 +77,56 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Printf("wifi-init: version %s", Version)
 
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
+
 	iface := getenv("WIFI_INIT_INTERFACE", defaultInterface)
 	timeout := getenvDuration("WIFI_INIT_TIMEOUT", defaultTimeout)
 	country := strings.ToUpper(getenv("WIFI_COUNTRY", defaultCountry))
-	ethernetFirst := getenvBool("WIFI_INIT_ETHERNET_FIRST", true)
+	ethernetFirst := getenvBool("WIFI_INIT_ETHERNET_FIRST", false)
 	ethernetIface := getenv("WIFI_INIT_ETHERNET_INTERFACE", defaultEthernetIface)
-	ethernetTimeout := getenvDuration("WIFI_INIT_ETHERNET_TIMEOUT", defaultEthernetTimeout)
 	wifiCommand := getenv("WIFI_INIT_WIFI_COMMAND", defaultWiFiCommand)
+	configPath := getenv("WIFI_INIT_CONFIG_PATH", defaultWiFiConfigPath)
 
-	if ethernetFirst {
-		log.Printf("wifi-init: waiting up to %s for Ethernet carrier on %s", ethernetTimeout, ethernetIface)
-		if waitForEthernetCarrier(ethernetIface, ethernetTimeout) {
-			log.Printf("wifi-init: Ethernet carrier on %s; leaving Wi-Fi disabled", ethernetIface)
-			return
-		}
-		log.Printf("wifi-init: no Ethernet carrier on %s; enabling Wi-Fi", ethernetIface)
+	if err := bringRadioUp(iface, country, timeout); err != nil {
+		log.Fatalf("wifi-init: %v", err)
 	}
 
+	if strings.TrimSpace(wifiCommand) == "" {
+		log.Printf("wifi-init: WIFI_INIT_WIFI_COMMAND is empty; radio is up, not associating")
+		return
+	}
+	supervise(ctx, wifiCommand, configPath, ethernetFirst, ethernetIface)
+}
+
+// bringRadioUp makes the interface usable for scanning: driver loaded, link
+// administratively UP, regulatory domain applied, power save off. Only a
+// missing driver or interface is fatal — the tuning steps are best-effort,
+// because a radio that is up but mis-tuned still beats no radio at all.
+func bringRadioUp(iface, country string, timeout time.Duration) error {
 	for _, module := range moduleOrder {
 		if err := loadModule(module.name); err != nil {
 			if module.optional {
 				log.Printf("wifi-init: skipping optional module %s: %v", module.name, err)
 				continue
 			}
-			log.Fatalf("wifi-init: load %s: %v", module.name, err)
+			return fmt.Errorf("load %s: %w", module.name, err)
 		}
 	}
 
 	if err := waitForInterface(iface, timeout); err != nil {
-		log.Fatalf("wifi-init: wait for %s: %v", iface, err)
+		return fmt.Errorf("wait for %s: %w", iface, err)
 	}
 	log.Printf("wifi-init: %s is available", iface)
+
+	// nl80211 refuses to scan on an interface that is administratively down,
+	// which is how it comes up after finit_module. The Wi-Fi client would
+	// normally do this, but the UI must be able to scan before any network
+	// is configured.
+	if err := setInterfaceUp(iface); err != nil {
+		return fmt.Errorf("bring %s up: %w", iface, err)
+	}
+	log.Printf("wifi-init: %s is up", iface)
 
 	if err := setRegulatoryDomain(country); err != nil {
 		log.Printf("wifi-init: set country %s: %v", country, err)
@@ -101,38 +139,126 @@ func main() {
 	} else {
 		log.Printf("wifi-init: disabled power save on %s", iface)
 	}
+	return nil
+}
 
-	if strings.TrimSpace(wifiCommand) == "" {
-		log.Printf("wifi-init: WIFI_INIT_WIFI_COMMAND is empty; not starting the Wi-Fi client")
-		return
-	}
-	log.Printf("wifi-init: starting Wi-Fi client %s", wifiCommand)
-	if err := unix.Exec(wifiCommand, []string{filepath.Base(wifiCommand)}, os.Environ()); err != nil {
-		log.Fatalf("wifi-init: start Wi-Fi client %s: %v", wifiCommand, err)
+// supervise runs the Wi-Fi client for as long as a network is configured.
+// It polls rather than watching inotify because /perm/wifi.json is replaced
+// via rename, and a 10s delay on a rarely-changed file is not worth the
+// extra machinery.
+func supervise(ctx context.Context, wifiCommand, configPath string, ethernetFirst bool, ethernetIface string) {
+	backoff := minBackoff
+	for ctx.Err() == nil {
+		if !wifiConfigured(configPath) {
+			log.Printf("wifi-init: no network configured in %s; radio is up for scanning", configPath)
+			if !sleepCtx(ctx, configPollInterval) {
+				return
+			}
+			continue
+		}
+
+		if ethernetFirst && hasCarrierOrFalse(ethernetIface) {
+			log.Printf("wifi-init: Ethernet carrier on %s; not associating", ethernetIface)
+			if !sleepCtx(ctx, configPollInterval) {
+				return
+			}
+			continue
+		}
+
+		log.Printf("wifi-init: starting Wi-Fi client %s", wifiCommand)
+		start := time.Now()
+		err := runWiFiClient(ctx, wifiCommand)
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			log.Printf("wifi-init: Wi-Fi client exited: %v", err)
+		} else {
+			log.Printf("wifi-init: Wi-Fi client exited cleanly")
+		}
+
+		// A client that stayed up is not in a crash loop; reset the backoff
+		// so a transient association failure much later doesn't inherit a
+		// two-minute delay.
+		if time.Since(start) > maxBackoff {
+			backoff = minBackoff
+		}
+		log.Printf("wifi-init: restarting in %s", backoff)
+		if !sleepCtx(ctx, backoff) {
+			return
+		}
+		backoff = min(backoff*2, maxBackoff)
 	}
 }
 
-// waitForEthernetCarrier reports whether name has link within timeout.
-func waitForEthernetCarrier(name string, timeout time.Duration) bool {
-	if timeout < 0 {
-		timeout = 0
+func runWiFiClient(ctx context.Context, wifiCommand string) error {
+	// #nosec G204 -- wifiCommand comes from the image's PackageConfig
+	cmd := exec.CommandContext(ctx, wifiCommand)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// wifiConfigured reports whether the gokrazy Wi-Fi client has something to
+// associate to. An empty or whitespace-only file counts as unconfigured.
+func wifiConfigured(path string) bool {
+	// #nosec G304 -- path is a well-known config file location under /perm
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
 	}
-	deadline := time.Now().Add(timeout)
-	for {
-		carrier, err := hasCarrier(name)
-		if err != nil {
-			// Interface missing entirely — no point polling for a carrier.
-			log.Printf("wifi-init: read carrier for %s: %v", name, err)
-			return false
-		}
-		if carrier {
-			return true
-		}
-		if timeout == 0 || time.Now().After(deadline) {
-			return false
-		}
-		time.Sleep(250 * time.Millisecond)
+	return len(strings.TrimSpace(string(data))) > 0
+}
+
+func hasCarrierOrFalse(name string) bool {
+	carrier, err := hasCarrier(name)
+	if err != nil {
+		return false
 	}
+	return carrier
+}
+
+// sleepCtx waits for d, returning false if the context was cancelled first.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+// setInterfaceUp sets IFF_UP via SIOCSIFFLAGS. gokrazy ships no `ip` binary
+// and we have no rtnetlink dependency, so the classic ioctl is the smallest
+// way to do this.
+func setInterfaceUp(name string) error {
+	if len(name) >= unix.IFNAMSIZ {
+		return fmt.Errorf("interface name %q too long", name)
+	}
+	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("socket: %w", err)
+	}
+	defer unix.Close(fd)
+
+	ifr, err := unix.NewIfreq(name)
+	if err != nil {
+		return err
+	}
+	if err := unix.IoctlIfreq(fd, unix.SIOCGIFFLAGS, ifr); err != nil {
+		return fmt.Errorf("get flags: %w", err)
+	}
+	flags := ifr.Uint16()
+	if flags&unix.IFF_UP != 0 {
+		return nil
+	}
+	ifr.SetUint16(flags | unix.IFF_UP)
+	if err := unix.IoctlIfreq(fd, unix.SIOCSIFFLAGS, ifr); err != nil {
+		return fmt.Errorf("set flags: %w", err)
+	}
+	return nil
 }
 
 // hasCarrier reads /sys/class/net/<name>/carrier. The file returns EINVAL

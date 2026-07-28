@@ -195,19 +195,25 @@ the registration token only needs to be supplied once.
 
 ## Wi-Fi
 
-The runner is happiest on Ethernet, so Wi-Fi is opt-in by behaviour rather
-than by configuration: on every boot the one-shot `wifi-init` service waits
-up to 10s for an Ethernet carrier on `eth0` and, if it finds one, exits
-without touching the radio. With no cable plugged in it:
+On every boot the `wifi-init` service brings the radio up
+**unconditionally**, even on a device that is on Ethernet with no network
+saved. That is what makes the web UI's *Scan* button work: you reach the UI
+over Ethernet, so the radio has to be live before you can pick a network.
+It:
 
 1. loads `brcmutil` + `brcmfmac` (gokrazy has no modprobe, so the Raspberry
    Pi 4's on-board radio never appears otherwise),
-2. sets the regulatory domain — without it the kernel uses the
-   world-roaming domain and most 5 GHz channels are unusable,
-3. disables Wi-Fi power save (brcmfmac defaults to on, which makes the
-   device silently unreachable from the LAN after idle periods), and
-4. exec's `/user/wifi`, the stock `github.com/gokrazy/wifi` client, which
-   associates using `/perm/wifi.json`.
+2. brings `wlan0` administratively **up** — nl80211 refuses to scan on a
+   down interface, and that is how it comes up after `finit_module`,
+3. sets the regulatory domain — without it the kernel uses the
+   world-roaming domain and most 5 GHz channels are unusable, and
+4. disables Wi-Fi power save (brcmfmac defaults to on, which makes the
+   device silently unreachable from the LAN after idle periods).
+
+It then **supervises** `/user/wifi`, the stock `github.com/gokrazy/wifi`
+client, for as long as `/perm/wifi.json` names a network — restarting it
+with `5s..2min` backoff and polling every 10s, so a network saved from the
+web UI associates without a reboot.
 
 Pick a network from the **Wi-Fi** card in the web UI: *Scan for networks*
 lists what the radio can see (SSID, signal, whether it is encrypted, and
@@ -233,13 +239,18 @@ Tunables (set in the `cmd/wifi-init` PackageConfig `Environment`):
   `setup-gokrazy.sh` prompts for it)
 - `WIFI_INIT_INTERFACE` — Wi-Fi interface (default `wlan0`)
 - `WIFI_INIT_TIMEOUT` — how long to wait for the interface (default `15s`)
-- `WIFI_INIT_ETHERNET_FIRST` — skip Wi-Fi when a cable is present
-  (default `true`; set `false` to always bring the radio up)
+- `WIFI_INIT_ETHERNET_FIRST` — don't *associate* while a cable is present
+  (default `false`). The radio is brought up for scanning either way; this
+  only suppresses the Wi-Fi client.
 - `WIFI_INIT_ETHERNET_INTERFACE` — carrier to check (default `eth0`)
-- `WIFI_INIT_ETHERNET_TIMEOUT` — how long to wait for a carrier
-  (default `10s`)
-- `WIFI_INIT_WIFI_COMMAND` — Wi-Fi client to exec (default `/user/wifi`;
+- `WIFI_INIT_CONFIG_PATH` — network config to watch (default
+  `/perm/wifi.json`)
+- `WIFI_INIT_WIFI_COMMAND` — Wi-Fi client to run (default `/user/wifi`;
   set empty to bring the radio up without associating)
+
+If the UI reports **"No Wi-Fi radio detected"**, the driver never bound:
+check the `wifi-init` logs (the *Runner → Logs → kernel* view, or the
+support bundle) for a `load brcmfmac` failure.
 
 ## Tailscale
 

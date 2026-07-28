@@ -1,6 +1,10 @@
 package main
 
 import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -96,14 +100,93 @@ func TestWaitForInterfaceTimeout(t *testing.T) {
 	}
 }
 
-func TestWaitForEthernetCarrierMissingInterface(t *testing.T) {
-	// A device with no eth0 must fall through to enabling Wi-Fi rather than
-	// blocking for the whole timeout.
-	start := time.Now()
-	if waitForEthernetCarrier("definitely-not-an-interface", 5*time.Second) {
-		t.Fatal("reported a carrier on a nonexistent interface")
+func TestWiFiConfigured(t *testing.T) {
+	dir := t.TempDir()
+
+	missing := filepath.Join(dir, "absent.json")
+	if wifiConfigured(missing) {
+		t.Error("a missing config must not count as configured")
 	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Fatalf("waited %s for a nonexistent interface", elapsed)
+
+	empty := filepath.Join(dir, "empty.json")
+	if err := os.WriteFile(empty, []byte("  \n\t"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// An empty file would make the Wi-Fi client spin on a config it cannot
+	// use, so it has to read as unconfigured.
+	if wifiConfigured(empty) {
+		t.Error("a whitespace-only config must not count as configured")
+	}
+
+	present := filepath.Join(dir, "wifi.json")
+	if err := os.WriteFile(present, []byte(`{"ssid":"Home","psk":"password1"}`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if !wifiConfigured(present) {
+		t.Error("a populated config must count as configured")
+	}
+}
+
+func TestHasCarrierOrFalse(t *testing.T) {
+	if hasCarrierOrFalse("definitely-not-an-interface") {
+		t.Error("a missing interface must not report a carrier")
+	}
+}
+
+func TestSleepCtxCancels(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if sleepCtx(ctx, time.Hour) {
+		t.Fatal("sleepCtx should report cancellation instead of sleeping")
+	}
+}
+
+func TestSuperviseStopsOnContextCancel(t *testing.T) {
+	// No config is present, so supervise parks in its poll loop; cancelling
+	// must return promptly rather than block for configPollInterval.
+	ctx, cancel := context.WithCancel(context.Background())
+	dir := t.TempDir()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		supervise(ctx, "/nonexistent/wifi", filepath.Join(dir, "wifi.json"), false, "eth0")
+	}()
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("supervise did not return after cancellation")
+	}
+}
+
+func TestSuperviseRetriesFailingClient(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "wifi.json")
+	if err := os.WriteFile(configPath, []byte(`{"ssid":"Home"}`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// A client that exits immediately must not spin: the first retry waits
+	// minBackoff, so within a short window we see exactly one attempt.
+	script := filepath.Join(dir, "wifi-client")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	supervise(ctx, script, configPath, false, "eth0")
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("supervise ran for %s, want it to honour the context", elapsed)
+	}
+}
+
+func TestSetInterfaceUpRejectsLongName(t *testing.T) {
+	if err := setInterfaceUp(strings.Repeat("x", 64)); err == nil {
+		t.Error("expected an error for an oversized interface name")
 	}
 }

@@ -130,7 +130,8 @@ $(emit_packages_json '    ')
         "-ldflags=${VERSION_LDFLAGS}"
       ],
       "Environment": [
-        "WIFI_COUNTRY=${WIFI_COUNTRY}"
+        "WIFI_COUNTRY=${WIFI_COUNTRY}",
+        "WIFI_INIT_ETHERNET_FIRST=false"
       ]
     },
     "github.com/denysvitali/gokrazy-runner/cmd/usbdev-init": {

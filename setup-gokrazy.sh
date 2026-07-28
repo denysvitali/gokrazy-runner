@@ -104,7 +104,8 @@ $(emit_packages_json '    ')
     },
     "github.com/denysvitali/gokrazy-runner/cmd/wifi-init": {
       "Environment": [
-        "WIFI_COUNTRY=$WIFI_COUNTRY"
+        "WIFI_COUNTRY=$WIFI_COUNTRY",
+        "WIFI_INIT_ETHERNET_FIRST=false"
       ]
     },
     "github.com/denysvitali/gokrazy-runner/cmd/usbdev-init": {},

@@ -153,19 +153,33 @@ webui can't write inside `/perm/tailscale/`. The webui's
 `POST /api/tailscale` validates the key (must start with `tskey-auth-`),
 persists it, and runs `tailscale up` right away — no reboot needed.
 
-**`cmd/wifi-init` — one-shot, runs every boot.** Brings the radio up and
-then exec's `/user/wifi` (the stock `github.com/gokrazy/wifi` client, added
-with `"DontStart": true` so wifi-init owns its lifecycle). gokrazy has no
-udev and no modprobe, so `brcmutil` + `brcmfmac` are located under
-`/lib/modules/<uname -r>/` and loaded via `finit_module` by hand — without
-that, `wlan0` never exists. It then sets the nl80211 regulatory domain
-(`WIFI_COUNTRY`, default `CH`; the world-roaming default forbids most 5 GHz
-channels) and disables power save (brcmfmac defaults it on, which makes the
-Pi stop acking after idle periods — the DHCP lease survives so the device
-looks healthy locally while being unreachable from the LAN). Because a CI
-runner belongs on Ethernet, it first waits up to `WIFI_INIT_ETHERNET_TIMEOUT`
-for a carrier on `eth0` and exits without touching the radio if it finds
-one; set `WIFI_INIT_ETHERNET_FIRST=false` to always enable Wi-Fi.
+**`cmd/wifi-init` — long-lived, runs every boot.** Two distinct jobs, and
+keeping them separate is the whole point of the design:
+
+*Bring the radio up — unconditionally.* gokrazy has no udev and no
+modprobe, so `brcmutil` + `brcmfmac` are located under
+`/lib/modules/<uname -r>/` and loaded via `finit_module` by hand; without
+that, `wlan0` never exists. It then sets `IFF_UP` via `SIOCSIFFLAGS`
+(nl80211 refuses to scan on a down interface, which is how it comes up
+after `finit_module`), sets the regulatory domain (`WIFI_COUNTRY`, default
+`CH`; the world-roaming default forbids most 5 GHz channels), and disables
+power save (brcmfmac defaults it on, which makes the Pi stop acking after
+idle periods — the DHCP lease survives so the device looks healthy locally
+while being unreachable from the LAN).
+
+This step used to be skipped when `eth0` had a carrier, on the theory that
+a CI runner belongs on Ethernet. That was a catch-22: the operator reaches
+the web UI *over Ethernet*, so the radio was always off exactly when they
+wanted to scan, and every scan returned "no Wi-Fi interfaces found". Don't
+reintroduce it.
+
+*Associate — only when there is something to associate to.* It then
+supervises `/user/wifi` (the stock `github.com/gokrazy/wifi` client, added
+with `"DontStart": true` so wifi-init owns its lifecycle) for as long as
+`/perm/wifi.json` is non-empty, restarting it with `5s..2min` backoff and
+re-polling the file every 10s so a network saved from the web UI takes
+effect without a reboot. `WIFI_INIT_ETHERNET_FIRST=true` suppresses *only*
+this half while `eth0` has a carrier.
 
 **`pkg/wifimanager` — Wi-Fi scanning and saved networks.** Scans via raw
 nl80211 (`NL80211_CMD_TRIGGER_SCAN`, then a `NL80211_CMD_GET_SCAN` dump we
@@ -180,6 +194,10 @@ concurrent scan is normal). Duplicate SSIDs collapse to one entry, preferring
 the last network deletes `/perm/wifi.json` rather than leaving a stale SSID
 the client keeps retrying. Mutations snapshot and roll back on a failed
 save, so a PSK that never reached disk never appears in `GetNetworks`.
+`HasRadio` (surfaced as `has_radio` in `/api/wifi/status`) lets the UI say
+"the driver didn't load" instead of a bare "scan failed"; a zero-interface
+scan returns the `ErrNoRadio` sentinel, which names wifi-init as the place
+to look.
 
 **`cmd/usbdev-init` — long-lived udev stand-in.** Modern USB libraries
 (nusb, libusb) open devices via `/dev/bus/usb/<busnum>/<devnum>`. On a

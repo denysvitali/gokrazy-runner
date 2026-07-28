@@ -23,12 +23,15 @@ type fakeWiFiManager struct {
 	connErr   error
 	addErr    error
 	removeErr error
+	noRadio   bool
 	added     [][2]string
 	removed   []string
 	reordered []string
 }
 
 func (f *fakeWiFiManager) GetNetworks() []wifimanager.Network { return f.networks }
+
+func (f *fakeWiFiManager) HasRadio() bool { return !f.noRadio }
 
 func (f *fakeWiFiManager) AddNetwork(ssid, password string) error {
 	f.added = append(f.added, [2]string{ssid, password})
@@ -133,6 +136,21 @@ func TestWiFiStatusConnected(t *testing.T) {
 	}
 	if second := networks[1].(map[string]any); second["has_password"] != false {
 		t.Fatalf("open network reported as having a password: %v", second)
+	}
+}
+
+func TestWiFiStatusReportsRadioPresence(t *testing.T) {
+	// A device whose driver failed to load must be distinguishable from one
+	// that is simply not associated, otherwise the UI can only say "scan
+	// failed" and the operator has no idea why.
+	for _, tc := range []struct{ noRadio, want bool }{{false, true}, {true, false}} {
+		mgr := &fakeWiFiManager{noRadio: tc.noRadio, connErr: errors.New("not connected")}
+		s, _ := newWiFiTestServer(t, mgr)
+
+		rr := doWiFi(t, s, "GET", "/api/wifi/status", nil)
+		if body := decodeBody(t, rr); body["has_radio"] != tc.want {
+			t.Errorf("has_radio = %v, want %v", body["has_radio"], tc.want)
+		}
 	}
 }
 
