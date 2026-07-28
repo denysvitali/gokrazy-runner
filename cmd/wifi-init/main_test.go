@@ -190,3 +190,49 @@ func TestSetInterfaceUpRejectsLongName(t *testing.T) {
 		t.Error("expected an error for an oversized interface name")
 	}
 }
+
+func TestBringRadioUpFailsWithoutHardware(t *testing.T) {
+	// No wlan0 exists in the test environment, so this exercises the path the
+	// device hit: modules cannot be loaded and the interface never appears.
+	// It must return an error rather than calling log.Fatal — a fatal exit
+	// here makes gokrazy respawn wifi-init in a tight loop.
+	err := bringRadioUp("definitely-not-an-interface", "CH", 50*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected an error when the interface never appears")
+	}
+	if !strings.Contains(err.Error(), "never appeared") {
+		t.Errorf("error = %q, want it to name the missing interface", err)
+	}
+}
+
+func TestWaitForRadioReturnsOnCancel(t *testing.T) {
+	// The retry loop must be interruptible: a device that will never have a
+	// radio should sit quietly, and shutdown must not wait a full interval.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		waitForRadio(ctx, "definitely-not-an-interface", "CH", 10*time.Millisecond)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("waitForRadio ignored context cancellation")
+	}
+}
+
+func TestFindModuleReportsMissingModuleTree(t *testing.T) {
+	// The device reported `module "brcmutil" not found under
+	// /lib/modules/6.12.47-v8`, which reads like a packaging mistake when the
+	// real cause may be a kernel with no loadable modules at all.
+	_, err := findModule("brcmutil")
+	if err == nil {
+		t.Skip("this machine has a matching module; nothing to assert")
+	}
+	if !strings.Contains(err.Error(), "brcmutil") && !strings.Contains(err.Error(), "loadable modules") {
+		t.Errorf("error = %q, want it to name the module or the missing tree", err)
+	}
+}

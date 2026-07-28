@@ -56,22 +56,18 @@ const (
 	// a reboot.
 	configPollInterval = 10 * time.Second
 
+	// radioRetryInterval is how often we retry a radio that isn't there yet.
+	// Deliberately slow: the common case is a board that will never have one.
+	radioRetryInterval = 60 * time.Second
+
 	minBackoff = 5 * time.Second
 	maxBackoff = 2 * time.Minute
 )
 
-type kernelModule struct {
-	name     string
-	optional bool
-}
-
-// moduleOrder is load order, not alphabetical: brcmfmac depends on brcmutil.
-// brcmfmac-wcc is only present on newer kernels.
-var moduleOrder = []kernelModule{
-	{name: "brcmutil"},
-	{name: "brcmfmac"},
-	{name: "brcmfmac-wcc", optional: true},
-}
+// moduleOrder is load order, not alphabetical: brcmfmac depends on brcmutil,
+// and brcmfmac-wcc only exists on newer kernels. Every entry is best-effort:
+// a kernel with the driver built in has none of these files.
+var moduleOrder = []string{"brcmutil", "brcmfmac", "brcmfmac-wcc"}
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -88,34 +84,60 @@ func main() {
 	wifiCommand := getenv("WIFI_INIT_WIFI_COMMAND", defaultWiFiCommand)
 	configPath := getenv("WIFI_INIT_CONFIG_PATH", defaultWiFiConfigPath)
 
+	// A board with no Wi-Fi hardware, or a kernel that ships no brcmfmac, is
+	// a normal state — not a reason to die. Exiting here would make gokrazy
+	// respawn us immediately, and a service that fails in a tight loop
+	// drowns the log and burns CPU that a CI runner needs.
 	if err := bringRadioUp(iface, country, timeout); err != nil {
-		log.Fatalf("wifi-init: %v", err)
+		log.Printf("wifi-init: Wi-Fi unavailable: %v", err)
+		waitForRadio(ctx, iface, country, timeout)
+		if ctx.Err() != nil {
+			return
+		}
 	}
 
 	if strings.TrimSpace(wifiCommand) == "" {
 		log.Printf("wifi-init: WIFI_INIT_WIFI_COMMAND is empty; radio is up, not associating")
+		<-ctx.Done()
 		return
 	}
 	supervise(ctx, wifiCommand, configPath, ethernetFirst, ethernetIface)
 }
 
+// waitForRadio keeps retrying bringRadioUp in the background. A USB dongle
+// can be plugged in long after boot, and retrying slowly is much cheaper
+// than being restarted by gokrazy in a hot loop.
+func waitForRadio(ctx context.Context, iface, country string, timeout time.Duration) {
+	log.Printf("wifi-init: retrying every %s; plug in a supported adapter or "+
+		"build an image whose kernel ships brcmfmac", radioRetryInterval)
+	for {
+		if !sleepCtx(ctx, radioRetryInterval) {
+			return
+		}
+		if err := bringRadioUp(iface, country, timeout); err == nil {
+			log.Printf("wifi-init: Wi-Fi is now available on %s", iface)
+			return
+		}
+	}
+}
+
 // bringRadioUp makes the interface usable for scanning: driver loaded, link
-// administratively UP, regulatory domain applied, power save off. Only a
-// missing driver or interface is fatal — the tuning steps are best-effort,
-// because a radio that is up but mis-tuned still beats no radio at all.
+// administratively UP, regulatory domain applied, power save off.
+//
+// Loading a module is best-effort. gokrazy kernels vary: some ship brcmfmac
+// as a .ko under /lib/modules, others build it in, and on the latter there
+// is nothing to load and wlan0 already exists. Whether the radio actually
+// works is decided by the interface check below, not by finit_module.
 func bringRadioUp(iface, country string, timeout time.Duration) error {
 	for _, module := range moduleOrder {
-		if err := loadModule(module.name); err != nil {
-			if module.optional {
-				log.Printf("wifi-init: skipping optional module %s: %v", module.name, err)
-				continue
-			}
-			return fmt.Errorf("load %s: %w", module.name, err)
+		if err := loadModule(module); err != nil {
+			log.Printf("wifi-init: could not load %s (harmless if it is built into the kernel): %v",
+				module, err)
 		}
 	}
 
 	if err := waitForInterface(iface, timeout); err != nil {
-		return fmt.Errorf("wait for %s: %w", iface, err)
+		return fmt.Errorf("%s never appeared: %w", iface, err)
 	}
 	log.Printf("wifi-init: %s is available", iface)
 
@@ -398,6 +420,10 @@ func findModule(name string) (string, error) {
 	}
 
 	root := filepath.Join("/lib/modules", release)
+	if _, err := os.Stat(root); err != nil {
+		return "", fmt.Errorf("%s does not exist: this kernel ships no loadable modules", root)
+	}
+
 	var matches []string
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {

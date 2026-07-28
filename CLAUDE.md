@@ -159,7 +159,18 @@ keeping them separate is the whole point of the design:
 *Bring the radio up — unconditionally.* gokrazy has no udev and no
 modprobe, so `brcmutil` + `brcmfmac` are located under
 `/lib/modules/<uname -r>/` and loaded via `finit_module` by hand; without
-that, `wlan0` never exists. It then sets `IFF_UP` via `SIOCSIFFLAGS`
+that, `wlan0` never exists on a kernel that ships them as modules.
+
+Every module load is **best-effort**, and a device with no radio is not an
+error. Kernels differ — some build brcmfmac in, some ship it as a `.ko`,
+and some (an older `kernel.rpi` pin) ship no module tree at all — so
+whether Wi-Fi works is decided by whether `wlan0` appears, never by
+`finit_module`. wifi-init previously called `log.Fatalf` here, and because
+the radio setup now runs on every boot rather than only when Ethernet was
+absent, that turned into gokrazy respawning the service roughly once a
+second forever. Never exit this path: on failure it logs once and retries
+every `radioRetryInterval` (60s), which also picks up a USB adapter
+plugged in after boot. It then sets `IFF_UP` via `SIOCSIFFLAGS`
 (nl80211 refuses to scan on a down interface, which is how it comes up
 after `finit_module`), sets the regulatory domain (`WIFI_COUNTRY`, default
 `CH`; the world-roaming default forbids most 5 GHz channels), and disables

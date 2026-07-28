@@ -248,9 +248,21 @@ Tunables (set in the `cmd/wifi-init` PackageConfig `Environment`):
 - `WIFI_INIT_WIFI_COMMAND` — Wi-Fi client to run (default `/user/wifi`;
   set empty to bring the radio up without associating)
 
-If the UI reports **"No Wi-Fi radio detected"**, the driver never bound:
-check the `wifi-init` logs (the *Runner → Logs → kernel* view, or the
-support bundle) for a `load brcmfmac` failure.
+If the UI reports **"No Wi-Fi radio detected"**, the driver never bound.
+wifi-init keeps retrying once a minute and logs which of the two causes it
+hit:
+
+- `/lib/modules/<release> does not exist: this kernel ships no loadable
+  modules` — the image's kernel package has no module tree. Pin a kernel
+  that ships `brcmfmac`, e.g. add
+  `"KernelPackage": "github.com/gokrazy/kernel.rpi"` to `config.json` in
+  `scripts/build-ota-image.sh` and rebuild.
+- `module "brcmutil" not found under /lib/modules/<release>` — the tree
+  exists but lacks the Broadcom driver; same remedy.
+
+If neither line appears but `wlan0` still never shows up, the driver is
+built in and something else (missing firmware) is at fault — check the
+kernel log for `brcmfmac`.
 
 ## Tailscale
 
