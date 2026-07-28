@@ -14,6 +14,9 @@ github.com/gokrazy/nsenter
 github.com/greenpau/cni-plugins/cmd/cni-nftables-portmap
 github.com/greenpau/cni-plugins/cmd/cni-nftables-firewall
 
+# Wi-Fi client (associates using /perm/wifi.json, written by runner-webui)
+github.com/gokrazy/wifi
+
 # Tailscale (auto-registers with /perm/tailscale/authkey via cmd/tailscale-init)
 tailscale.com/cmd/tailscaled
 tailscale.com/cmd/tailscale
@@ -23,4 +26,5 @@ tailscale.com/cmd/tailscale
 ./cmd/runner-init
 ./cmd/runner-webui
 ./cmd/tailscale-init
+./cmd/wifi-init
 ./cmd/usbdev-init

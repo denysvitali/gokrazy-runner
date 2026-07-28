@@ -10,6 +10,7 @@ GOKRAZY_IMAGE_MODE="${GOKRAZY_IMAGE_MODE:-ota}"
 TARGET_STORAGE_BYTES="${TARGET_STORAGE_BYTES:-}"
 IMAGE_PATH="${IMAGE_DIR}/${IMAGE_NAME}"
 MKE2FS_BINARY="${MKE2FS_BINARY:-}"
+WIFI_COUNTRY="${WIFI_COUNTRY:-CH}"
 BUILD_DATE="${BUILD_DATE:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 INSTANCE_DIR="$GOKRAZY_PARENT_DIR/$GOKRAZY_INSTANCE"
@@ -83,6 +84,9 @@ $(emit_packages_json '    ')
     },
     "github.com/greenpau/cni-plugins/cmd/cni-nftables-portmap": {},
     "github.com/greenpau/cni-plugins/cmd/cni-nftables-firewall": {},
+    "github.com/gokrazy/wifi": {
+      "DontStart": true
+    },
     "github.com/gokrazy/breakglass": {
       "CommandLineFlags": [
         "-authorized_keys=/perm/breakglass/authorized_keys"
@@ -118,6 +122,15 @@ $(emit_packages_json '    ')
         "TS_AUTH_KEY_PATH=/perm/tailscale.authkey",
         "TS_HOSTNAME=${GOKRAZY_INSTANCE}",
         "TS_TAILSCALE_UP_ARGS=--ssh"
+      ]
+    },
+    "github.com/denysvitali/gokrazy-runner/cmd/wifi-init": {
+      "GoBuildFlags": [
+        "-trimpath",
+        "-ldflags=${VERSION_LDFLAGS}"
+      ],
+      "Environment": [
+        "WIFI_COUNTRY=${WIFI_COUNTRY}"
       ]
     },
     "github.com/denysvitali/gokrazy-runner/cmd/usbdev-init": {

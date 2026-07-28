@@ -26,6 +26,9 @@ fi
 read -r -p "Instance name [gokrazy-runner]: " INSTANCE_NAME
 INSTANCE_NAME="${INSTANCE_NAME:-gokrazy-runner}"
 
+read -r -p "Wi-Fi regulatory country (ISO 3166-1 alpha-2) [CH]: " WIFI_COUNTRY
+WIFI_COUNTRY="$(echo "${WIFI_COUNTRY:-CH}" | tr '[:lower:]' '[:upper:]')"
+
 MKE2FS_BINARY="${MKE2FS_BINARY:-$(command -v mke2fs || true)}"
 if [ -z "$MKE2FS_BINARY" ] || [ ! -x "$MKE2FS_BINARY" ]; then
   echo "Error: MKE2FS_BINARY must point to an executable mke2fs for the target architecture"
@@ -77,6 +80,9 @@ $(emit_packages_json '    ')
     },
     "github.com/greenpau/cni-plugins/cmd/cni-nftables-portmap": {},
     "github.com/greenpau/cni-plugins/cmd/cni-nftables-firewall": {},
+    "github.com/gokrazy/wifi": {
+      "DontStart": true
+    },
     "github.com/gokrazy/breakglass": {
       "CommandLineFlags": [
         "-authorized_keys=/perm/breakglass/authorized_keys"
@@ -94,6 +100,11 @@ $(emit_packages_json '    ')
         "TS_AUTH_KEY_PATH=/perm/tailscale.authkey",
         "TS_HOSTNAME=$INSTANCE_NAME",
         "TS_TAILSCALE_UP_ARGS=--ssh"
+      ]
+    },
+    "github.com/denysvitali/gokrazy-runner/cmd/wifi-init": {
+      "Environment": [
+        "WIFI_COUNTRY=$WIFI_COUNTRY"
       ]
     },
     "github.com/denysvitali/gokrazy-runner/cmd/usbdev-init": {},

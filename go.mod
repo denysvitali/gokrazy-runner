@@ -6,7 +6,10 @@ require (
 	github.com/diskfs/go-diskfs v1.9.1
 	github.com/gokrazy/gokapi v0.0.0-20251205165548-0927bab199d4
 	github.com/gokrazy/updater v0.0.0-20250705135802-db129c40879c
-	golang.org/x/sys v0.39.0
+	github.com/mdlayher/genetlink v1.4.0
+	github.com/mdlayher/netlink v1.11.2
+	github.com/mdlayher/wifi v0.8.0
+	golang.org/x/sys v0.46.0
 )
 
 require (
@@ -15,12 +18,17 @@ require (
 	github.com/djherbis/times v1.6.0 // indirect
 	github.com/elliotwutingfeng/asciiset v0.0.0-20230602022725-51bbb787efab // indirect
 	github.com/gokrazy/internal v0.0.0-20251205165016-cbfb18ae2684 // indirect
+	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/klauspost/compress v1.17.4 // indirect
+	github.com/mdlayher/socket v0.6.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.17 // indirect
 	github.com/pkg/xattr v0.4.12 // indirect
 	github.com/sirupsen/logrus v1.9.4-0.20230606125235-dd1b4c2e81af // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
+	golang.org/x/crypto v0.53.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.23.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
 )

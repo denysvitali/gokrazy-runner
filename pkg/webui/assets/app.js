@@ -105,18 +105,163 @@ function fillTailscale(payload) {
   }
 }
 
+// Wi-Fi --------------------------------------------------------------------
+
+function signalBars(dbm) {
+  // Typical dBm range for usable Wi-Fi is -30 (excellent) to -90 (unusable).
+  if (dbm >= -55) return "▂▄▆█";
+  if (dbm >= -67) return "▂▄▆_";
+  if (dbm >= -75) return "▂▄__";
+  return "▂___";
+}
+
+function wifiListItem({ label, meta, actions }) {
+  const li = document.createElement("li");
+  const text = document.createElement("span");
+  text.className = "wifi-label";
+  text.textContent = label;
+  li.appendChild(text);
+  if (meta) {
+    const m = document.createElement("span");
+    m.className = "wifi-meta";
+    m.textContent = meta;
+    li.appendChild(m);
+  }
+  (actions || []).forEach((btn) => li.appendChild(btn));
+  return li;
+}
+
+function makeButton(label, onClick) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = label;
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
+function fillWiFi(payload) {
+  const statusEl = qs("#wifi-status");
+  const savedList = qs("#wifi-saved-list");
+  if (!statusEl || !savedList) return;
+
+  if (!payload) {
+    statusEl.textContent = "Wi-Fi is not available on this device.";
+    statusEl.classList.remove("ok");
+    savedList.replaceChildren();
+    return;
+  }
+
+  if (payload.connected) {
+    const iface = payload.interface ? ` on ${payload.interface}` : "";
+    statusEl.textContent = `Connected to ${payload.ssid}${iface} (${payload.signal} dBm).`;
+    statusEl.classList.add("ok");
+  } else {
+    statusEl.textContent = "Not connected to a Wi-Fi network.";
+    statusEl.classList.remove("ok");
+  }
+
+  const networks = payload.networks || [];
+  savedList.replaceChildren();
+  if (networks.length === 0) {
+    savedList.appendChild(wifiListItem({ label: "No saved networks." }));
+    return;
+  }
+  networks.forEach((net, i) => {
+    const meta = [i === 0 ? "active" : "", net.has_password ? "WPA" : "open"]
+      .filter(Boolean)
+      .join(" • ");
+    savedList.appendChild(
+      wifiListItem({
+        label: net.ssid,
+        meta,
+        actions: [makeButton("Forget", () => forgetWiFi(net.ssid))],
+      }),
+    );
+  });
+}
+
+async function forgetWiFi(ssid) {
+  if (!window.confirm(`Forget "${ssid}"?`)) return;
+  const status = qs("#status-wifi");
+  setStatus(status, "Removing...", "info");
+  try {
+    await postJSON("/api/wifi/forget", { ssid });
+    setStatus(status, `Forgot ${ssid}.`, "ok");
+    loadAll();
+  } catch (err) {
+    setStatus(status, err.message || "Remove failed", "err");
+  }
+}
+
+function renderScanResults(networks) {
+  const list = qs("#wifi-scan-list");
+  if (!list) return;
+  list.replaceChildren();
+  list.hidden = false;
+
+  if (!networks || networks.length === 0) {
+    list.appendChild(wifiListItem({ label: "No networks found." }));
+    return;
+  }
+
+  networks.forEach((net) => {
+    const meta = [
+      `${signalBars(net.signal)} ${net.signal} dBm`,
+      net.encrypted ? "WPA" : "open",
+      net.connected ? "connected" : "",
+      net.saved && !net.connected ? "saved" : "",
+    ]
+      .filter(Boolean)
+      .join(" • ");
+
+    list.appendChild(
+      wifiListItem({
+        label: net.ssid,
+        meta,
+        actions: [
+          makeButton("Select", () => {
+            qs("#wifi-ssid").value = net.ssid;
+            const psk = qs("#wifi-psk");
+            psk.value = "";
+            // An open network needs no passphrase; focus the button instead.
+            if (net.encrypted) psk.focus();
+          }),
+        ],
+      }),
+    );
+  });
+}
+
+async function scanWiFi() {
+  const status = qs("#status-wifi");
+  const button = qs("#wifi-scan");
+  setStatus(status, "Scanning… this takes a few seconds.", "info");
+  button.disabled = true;
+  try {
+    const resp = await postJSON("/api/wifi/scan", {});
+    renderScanResults(resp && resp.networks);
+    setStatus(status, `Found ${(resp && resp.networks ? resp.networks : []).length} network(s).`, "ok");
+  } catch (err) {
+    setStatus(status, err.message || "Scan failed", "err");
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function loadAll() {
   try {
-    const [status, config, keys, tailscale] = await Promise.all([
+    const [status, config, keys, tailscale, wifi] = await Promise.all([
       getJSON("/api/status").catch(() => null),
       getJSON("/api/config").catch(() => null),
       getJSON("/api/keys").catch(() => null),
       getJSON("/api/tailscale").catch(() => null),
+      getJSON("/api/wifi/status").catch(() => null),
     ]);
     renderStatusPill(status);
     fillConfig(config);
     fillKeys(keys);
     fillTailscale(tailscale);
+    fillWiFi(wifi);
   } catch (err) {
     const pill = qs("#status-pill");
     if (pill) pill.textContent = "error loading";
@@ -172,6 +317,24 @@ function bindForms() {
     try {
       await postJSON("/api/keys", { keys: qs("#keys-value").value });
       setStatus(status, "Saved.", "ok");
+    } catch (err) {
+      setStatus(status, err.message || "Save failed", "err");
+    }
+  });
+
+  qs("#wifi-scan").addEventListener("click", scanWiFi);
+
+  qs("#wifi-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const status = qs("#status-wifi");
+    const ssid = qs("#wifi-ssid");
+    const psk = qs("#wifi-psk");
+    setStatus(status, "Saving...", "info");
+    try {
+      await postJSON("/api/wifi/connect", { ssid: ssid.value.trim(), password: psk.value });
+      psk.value = "";
+      setStatus(status, "Saved. The device will associate shortly.", "ok");
+      loadAll();
     } catch (err) {
       setStatus(status, err.message || "Save failed", "err");
     }

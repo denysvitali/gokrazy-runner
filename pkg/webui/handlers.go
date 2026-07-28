@@ -27,6 +27,10 @@ type ServerConfig struct {
 	// OTAMgr handles GitHub-release-driven OTA updates. Optional; when nil
 	// the /api/ota/* endpoints return 503 Service Unavailable.
 	OTAMgr *ota.Manager
+	// WiFiMgr handles Wi-Fi scanning and saved networks. Optional; when nil
+	// the /api/wifi/* endpoints return 503 Service Unavailable (e.g. on a
+	// device with no radio).
+	WiFiMgr WiFiManager
 	// Support overrides the diagnostics endpoint defaults. Zero values
 	// are filled in at request time.
 	Support SupportOptions
@@ -70,6 +74,11 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.HandleFunc("/api/keys", s.handleKeys)
 	mux.HandleFunc("/api/password", s.handlePassword)
 	mux.HandleFunc("/api/tailscale", s.handleTailscale)
+	mux.HandleFunc("/api/wifi/status", s.handleWiFiStatus)
+	mux.HandleFunc("/api/wifi/scan", s.handleWiFiScan)
+	mux.HandleFunc("/api/wifi/connect", s.handleWiFiConnect)
+	mux.HandleFunc("/api/wifi/forget", s.handleWiFiForget)
+	mux.HandleFunc("/api/wifi/reorder", s.handleWiFiReorder)
 	mux.HandleFunc("/api/reboot", s.handleReboot)
 	mux.HandleFunc("/api/ota/status", s.handleOTAStatus)
 	mux.HandleFunc("/api/ota/install", s.handleOTAInstall)
@@ -151,6 +160,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"version":              s.cfg.Version,
 		"password_is_default":  s.cfg.PasswordMgr.IsDefault(),
 		"tailscale_configured": tailscaleConfigured,
+		"wifi_available":       s.cfg.WiFiMgr != nil,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

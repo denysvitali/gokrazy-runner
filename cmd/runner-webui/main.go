@@ -16,6 +16,7 @@ import (
 	"github.com/denysvitali/gokrazy-runner/pkg/ota"
 	"github.com/denysvitali/gokrazy-runner/pkg/tlsconfig"
 	"github.com/denysvitali/gokrazy-runner/pkg/webui"
+	"github.com/denysvitali/gokrazy-runner/pkg/wifimanager"
 )
 
 const (
@@ -62,6 +63,16 @@ func main() {
 		log.Fatalf("ota manager: %v", err)
 	}
 
+	// A missing or unreadable Wi-Fi config is not fatal: the device may have
+	// no radio at all, in which case the /api/wifi/* endpoints report 503 and
+	// the rest of the UI works as before.
+	var wifiMgr webui.WiFiManager
+	if mgr, err := wifimanager.NewManager(); err != nil {
+		log.Printf("wifi manager unavailable: %v", err)
+	} else {
+		wifiMgr = mgr
+	}
+
 	srv, err := webui.NewServer(webui.ServerConfig{
 		EnvPath:          envFile,
 		TokenPath:        tokenFile,
@@ -71,6 +82,7 @@ func main() {
 		PasswordMgr:      pm,
 		Version:          Version,
 		OTAMgr:           otaMgr,
+		WiFiMgr:          wifiMgr,
 	})
 	if err != nil {
 		log.Fatalf("webui server: %v", err)
@@ -156,4 +168,3 @@ func waitForPerm(ctx context.Context) {
 		}
 	}
 }
-

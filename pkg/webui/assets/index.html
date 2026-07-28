@@ -59,6 +59,30 @@
       </form>
     </section>
 
+    <section id="section-wifi" class="card">
+      <h2>Wi-Fi</h2>
+      <p class="hint" id="wifi-status">Loading…</p>
+      <div class="row">
+        <button type="button" id="wifi-scan">Scan for networks</button>
+      </div>
+      <ul id="wifi-scan-list" class="wifi-list" hidden></ul>
+      <form id="wifi-form" autocomplete="off">
+        <label>
+          <span>Network (SSID)</span>
+          <input type="text" id="wifi-ssid" name="ssid" maxlength="32" placeholder="MyNetwork">
+        </label>
+        <label>
+          <span>Password</span>
+          <input type="password" id="wifi-psk" name="password" placeholder="leave empty for an open network">
+        </label>
+        <p class="hint">Saving writes <code>/perm/wifi.json</code>, which the gokrazy Wi-Fi client uses to associate. Ethernet is preferred at boot: Wi-Fi comes up only when no cable is plugged in.</p>
+        <button type="submit">Save &amp; Connect</button>
+        <p class="status" id="status-wifi" aria-live="polite"></p>
+      </form>
+      <h3>Saved networks</h3>
+      <ul id="wifi-saved-list" class="wifi-list"></ul>
+    </section>
+
     <section id="section-tailscale" class="card">
       <h2>Tailscale</h2>
       <p class="hint" id="tailscale-status">Auth key not configured.</p>

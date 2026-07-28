@@ -22,18 +22,19 @@ flowchart LR
     boot([power on]) --> permInit
     permInit -- "p4 not full / no fs" --> reboot([reboot])
     permInit -- "ready" --> mount["/perm mounted"]
-    mount --> tsInit & usbInit & runnerInit & webui
+    mount --> wifiInit & tsInit & usbInit & runnerInit & webui
 
     classDef oneshot fill:#fde68a,stroke:#b45309,color:#111
     classDef longlived fill:#bfdbfe,stroke:#1d4ed8,color:#111
     classDef event fill:#e5e7eb,stroke:#4b5563,color:#111
 
-    class permInit,tsInit oneshot
+    class permInit,tsInit,wifiInit oneshot
     class usbInit,runnerInit,webui longlived
     class boot,reboot,mount event
 ```
 
-`perm-init` and `tailscale-init` are one-shot (yellow); `usbdev-init`,
+`perm-init`, `wifi-init`, and `tailscale-init` are one-shot (yellow);
+`usbdev-init`,
 `runner-init`, and `runner-webui` are long-lived supervisors (blue).
 
 ### Runner data plane
@@ -126,9 +127,11 @@ cmd/perm-init/        one-shot service: grow + format /perm on first boot
 cmd/runner-init/      runs the GitHub runner container under podman
 cmd/runner-webui/     HTTPS web UI for runner config + OTA
 cmd/tailscale-init/   one-shot: tailscale up using /perm/tailscale.authkey
+cmd/wifi-init/        one-shot: load the Wi-Fi driver, then exec gokrazy's wifi
 cmd/usbdev-init/      udev stand-in: mknods /dev/bus/usb/BBB/DDD from sysfs
 pkg/dnsfallback/      seeds /tmp/resolv.conf when DHCP supplies no DNS
 pkg/perminit/         GPT/partition helpers shared by perm-init
+pkg/wifimanager/      Wi-Fi scanning (nl80211) + saved networks in /perm
 scripts/
   gok-packages.txt    canonical list of gokrazy packages
   gok-common.sh       shell helper sourced by setup + build scripts
@@ -190,6 +193,54 @@ new files within seconds — no reboot needed. The runner's `_work` directory
 and registered identity persist in `/perm/runner-data` across reboots, so
 the registration token only needs to be supplied once.
 
+## Wi-Fi
+
+The runner is happiest on Ethernet, so Wi-Fi is opt-in by behaviour rather
+than by configuration: on every boot the one-shot `wifi-init` service waits
+up to 10s for an Ethernet carrier on `eth0` and, if it finds one, exits
+without touching the radio. With no cable plugged in it:
+
+1. loads `brcmutil` + `brcmfmac` (gokrazy has no modprobe, so the Raspberry
+   Pi 4's on-board radio never appears otherwise),
+2. sets the regulatory domain — without it the kernel uses the
+   world-roaming domain and most 5 GHz channels are unusable,
+3. disables Wi-Fi power save (brcmfmac defaults to on, which makes the
+   device silently unreachable from the LAN after idle periods), and
+4. exec's `/user/wifi`, the stock `github.com/gokrazy/wifi` client, which
+   associates using `/perm/wifi.json`.
+
+Pick a network from the **Wi-Fi** card in the web UI: *Scan for networks*
+lists what the radio can see (SSID, signal, whether it is encrypted, and
+whether you already have it saved), and *Save & Connect* stores the
+credentials. Saving writes two files:
+
+- `/perm/extra-wifi.json` — every network you have saved, in priority order
+- `/perm/wifi.json` — the highest-priority network only, in the single-object
+  format `github.com/gokrazy/wifi` reads
+
+Both are `chmod 0600` and written atomically. Forgetting the last saved
+network removes `/perm/wifi.json` so the device stops retrying it.
+
+To provision headlessly instead, write `/perm/wifi.json` by hand:
+
+```json
+{"ssid": "MyNetwork", "psk": "my-passphrase"}
+```
+
+Tunables (set in the `cmd/wifi-init` PackageConfig `Environment`):
+
+- `WIFI_COUNTRY` — ISO 3166-1 alpha-2 regulatory domain (default `CH`;
+  `setup-gokrazy.sh` prompts for it)
+- `WIFI_INIT_INTERFACE` — Wi-Fi interface (default `wlan0`)
+- `WIFI_INIT_TIMEOUT` — how long to wait for the interface (default `15s`)
+- `WIFI_INIT_ETHERNET_FIRST` — skip Wi-Fi when a cable is present
+  (default `true`; set `false` to always bring the radio up)
+- `WIFI_INIT_ETHERNET_INTERFACE` — carrier to check (default `eth0`)
+- `WIFI_INIT_ETHERNET_TIMEOUT` — how long to wait for a carrier
+  (default `10s`)
+- `WIFI_INIT_WIFI_COMMAND` — Wi-Fi client to exec (default `/user/wifi`;
+  set empty to bring the radio up without associating)
+
 ## Tailscale
 
 The image bakes in upstream `tailscale.com/cmd/tailscaled` and
@@ -245,6 +296,15 @@ point a browser at `https://<device>:8443/`.
   `/etc/gokr-pw.txt`, and finally to the literal default `gokrazy-runner`
   if neither file exists. Changing the password from the UI rewrites
   `/perm/gokr-pw.txt`, so `/update/` and the UI stay in sync.
+- **Wi-Fi**: scan for nearby networks, save credentials, and forget saved
+  networks. `GET /api/wifi/status` reports the current association and the
+  saved list (SSIDs only — a PSK is never returned, even to an
+  authenticated caller); `POST /api/wifi/scan` triggers a scan
+  (`?sort=signal|name|security`, default signal); `POST /api/wifi/connect`
+  (`{"ssid":"…","password":"…"}`) saves and activates a network;
+  `POST /api/wifi/forget` (`{"ssid":"…"}`) removes one; `POST
+  /api/wifi/reorder` (`{"ssids":[…]}`) changes priority. All five return
+  503 when the device has no radio.
 - **What you can edit**: the runner's `URL`, `NAME`, `LABELS`, `IMAGE`,
   and arbitrary extra `KEY=VALUE` env entries (writes `/perm/runner.env`);
   the one-shot GitHub registration token (`/perm/runner.token`); the

@@ -88,7 +88,9 @@ are picked up without a restart. Endpoints: `GET /` + `/static/...`
 (embedded), `GET|POST /api/config`, `POST /api/token`, `GET|POST
 /api/keys`, `POST /api/password`, `GET|POST /api/tailscale`,
 `POST /api/reboot` (gokapi), `GET /api/status`, `GET /api/ota/status`,
-`POST /api/ota/install` (see `pkg/ota` below).
+`POST /api/ota/install` (see `pkg/ota` below), `GET /api/wifi/status`,
+`POST /api/wifi/{scan,connect,forget,reorder}` (503 when the device has no
+radio; the saved-network response carries `has_password`, never the PSK).
 
 **`pkg/ota` — GitHub-driven A/B updater.** Lists releases from
 `https://api.github.com/repos/denysvitali/gokrazy-runner/releases`,
@@ -119,6 +121,34 @@ webui can't write inside `/perm/tailscale/`. The webui's
 `POST /api/tailscale` validates the key (must start with `tskey-auth-`),
 persists it, and runs `tailscale up` right away — no reboot needed.
 
+**`cmd/wifi-init` — one-shot, runs every boot.** Brings the radio up and
+then exec's `/user/wifi` (the stock `github.com/gokrazy/wifi` client, added
+with `"DontStart": true` so wifi-init owns its lifecycle). gokrazy has no
+udev and no modprobe, so `brcmutil` + `brcmfmac` are located under
+`/lib/modules/<uname -r>/` and loaded via `finit_module` by hand — without
+that, `wlan0` never exists. It then sets the nl80211 regulatory domain
+(`WIFI_COUNTRY`, default `CH`; the world-roaming default forbids most 5 GHz
+channels) and disables power save (brcmfmac defaults it on, which makes the
+Pi stop acking after idle periods — the DHCP lease survives so the device
+looks healthy locally while being unreachable from the LAN). Because a CI
+runner belongs on Ethernet, it first waits up to `WIFI_INIT_ETHERNET_TIMEOUT`
+for a carrier on `eth0` and exits without touching the radio if it finds
+one; set `WIFI_INIT_ETHERNET_FIRST=false` to always enable Wi-Fi.
+
+**`pkg/wifimanager` — Wi-Fi scanning and saved networks.** Scans via raw
+nl80211 (`NL80211_CMD_TRIGGER_SCAN`, then a `NL80211_CMD_GET_SCAN` dump we
+parse ourselves) because `mdlayher/wifi`'s parser drops BSSes with
+information elements it doesn't recognise; it falls back to the library, and
+then to the kernel's cached results when the trigger fails (EBUSY during a
+concurrent scan is normal). Duplicate SSIDs collapse to one entry, preferring
+5 GHz and then the strongest signal. Saved networks live in two files:
+`/perm/extra-wifi.json` (the full priority-ordered list, ours) and
+`/perm/wifi.json` (the head entry only, in the single-object format
+`gokrazy/wifi` reads). Both are written atomically at mode 0600; forgetting
+the last network deletes `/perm/wifi.json` rather than leaving a stale SSID
+the client keeps retrying. Mutations snapshot and roll back on a failed
+save, so a PSK that never reached disk never appears in `GetNetworks`.
+
 **`cmd/usbdev-init` — long-lived udev stand-in.** Modern USB libraries
 (nusb, libusb) open devices via `/dev/bus/usb/<busnum>/<devnum>`. On a
 stock distro udev creates those nodes from kernel uevents; gokrazy has
@@ -140,6 +170,7 @@ suffices.
 afterwards), `breakglass/authorized_keys`, `gokr-pw.txt` (the
 gokrazy update password, also used by runner-webui; falls back to the
 rootfs-baked `/etc/gokr-pw.txt` if the perm copy is missing), and
+`wifi.json` + `extra-wifi.json` (chmod 0600; see `pkg/wifimanager`), and
 `tailscale.authkey` (chmod 0600; flat file at the `/perm/` root —
 tailscaled's state lives in `/perm/tailscale/`, kept separate because
 gokrazy's bind-mount of `-statedir` is read-only for other services).
