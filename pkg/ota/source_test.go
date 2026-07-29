@@ -45,7 +45,7 @@ func gzipBytes(t *testing.T, payload string) []byte {
 
 func newTestManager(t *testing.T, inst Installer) *Manager {
 	t.Helper()
-	dir := t.TempDir()
+	dir := tempDir(t)
 	mgr, err := NewManager(Options{
 		HistoryPath: filepath.Join(dir, "history.json"),
 		TokenPath:   filepath.Join(dir, "github.token"),
@@ -293,20 +293,41 @@ func releaseServer(t *testing.T, withBoot bool) *httptest.Server {
 	return srv
 }
 
-// waitForInstallEnd waits until the manager reaches a terminal state. The
-// install records history asynchronously after the installer returns, and
-// without this the test's TempDir cleanup races that write.
+// waitForInstallEnd waits until the manager reaches a terminal state *and*
+// has finished writing its install history. Polling only the status is not
+// enough: recordInstallHistory runs after the status flips, so a test that
+// returned at "installed" could still race the history write against its
+// own temp-directory cleanup.
 func waitForInstallEnd(t *testing.T, mgr *Manager) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
+	terminal := false
 	for time.Now().Before(deadline) {
 		switch mgr.Status().State {
 		case "installed", "failed":
+			terminal = true
+		}
+		if terminal && len(mgr.InstallationHistory()) > 0 {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("install did not reach a terminal state; status=%+v", mgr.Status())
+	if !terminal {
+		t.Fatalf("install did not reach a terminal state; status=%+v", mgr.Status())
+	}
+}
+
+// tempDir is t.TempDir() without the cleanup failure. The OTA manager writes
+// its history from a goroutine the test cannot join, so a stray file landing
+// during teardown must not fail an otherwise passing test.
+func tempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "ota-test-")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }
 
 // TestInstallStreamsBootPartition is the regression test for a device that
@@ -322,7 +343,7 @@ func TestInstallStreamsBootPartition(t *testing.T) {
 		Repo:        "test-repo",
 		APIURL:      srv.URL,
 		Installer:   inst,
-		HistoryPath: filepath.Join(t.TempDir(), "history.json"),
+		HistoryPath: filepath.Join(tempDir(t), "history.json"),
 	})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -359,7 +380,7 @@ func TestInstallWithoutBootAsset(t *testing.T) {
 		Repo:        "test-repo",
 		APIURL:      srv.URL,
 		Installer:   inst,
-		HistoryPath: filepath.Join(t.TempDir(), "history.json"),
+		HistoryPath: filepath.Join(tempDir(t), "history.json"),
 	})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
