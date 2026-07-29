@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -27,10 +28,11 @@ import (
 )
 
 const (
-	DefaultOwner        = "denysvitali"
-	DefaultRepo         = "gokrazy-runner"
-	DefaultAssetName    = "gokrazy-runner-rpi4b-root.squashfs.gz"
-	DefaultGitHubAPIURL = "https://api.github.com"
+	DefaultOwner         = "denysvitali"
+	DefaultRepo          = "gokrazy-runner"
+	DefaultAssetName     = "gokrazy-runner-rpi4b-root.squashfs.gz"
+	DefaultBootAssetName = "gokrazy-runner-rpi4b-boot.fat.gz"
+	DefaultGitHubAPIURL  = "https://api.github.com"
 	// UpdateInsecureEnv enables TLS verification bypass for self-signed
 	// gokrazy updater endpoints.
 	UpdateInsecureEnv = "OTA_GOKRAZY_INSECURE"
@@ -45,7 +47,7 @@ const (
 type PasswordFunc func() string
 
 type Installer interface {
-	InstallRoot(ctx context.Context, r io.Reader, progress InstallProgressFunc) error
+	Install(ctx context.Context, images Images, progress InstallProgressFunc) error
 }
 
 type InstallProgressFunc func(InstallProgress)
@@ -64,7 +66,23 @@ type GokrazyInstaller struct {
 	InsecureSkipVerify bool
 }
 
-func (i GokrazyInstaller) InstallRoot(ctx context.Context, r io.Reader, progress InstallProgressFunc) error {
+// Images are the partition images to install.
+//
+// Boot is optional. It matters because the kernel and device trees live in
+// the boot partition, not the root filesystem: an update that streams only
+// the root leaves the device running its old kernel, which is how a build
+// that shipped /lib/modules/6.18.34-v8 ended up on a device running
+// 6.12.47-v8 and finding no modules for itself.
+type Images struct {
+	Root io.Reader
+	// Boot is opened only after the root stream succeeded, so a failure
+	// mid-download never leaves a new kernel paired with an old userspace.
+	// Nil for releases that publish no boot image, and for the URL and
+	// upload install paths.
+	Boot func(ctx context.Context) (io.ReadCloser, error)
+}
+
+func (i GokrazyInstaller) Install(ctx context.Context, images Images, progress InstallProgressFunc) error {
 	baseURL := normalizeUpdateBaseURL(i.BaseURL)
 	if baseURL == "" {
 		return errors.New("ota: empty gokrazy updater base URL")
@@ -76,10 +94,28 @@ func (i GokrazyInstaller) InstallRoot(ctx context.Context, r io.Reader, progress
 	if err != nil {
 		return fmt.Errorf("connect to gokrazy updater: %w", err)
 	}
+	// Root first: it goes to the inactive partition, so it cannot break the
+	// running system if the transfer fails.
 	reportInstallProgress(progress, "flashing", "Downloading and flashing OTA image", 10)
-	if err := target.StreamTo(ctx, "root", r); err != nil {
+	if err := target.StreamTo(ctx, "root", images.Root); err != nil {
 		return fmt.Errorf("stream root image: %w", err)
 	}
+
+	if images.Boot != nil {
+		reportInstallProgress(progress, "flashing-boot", "Updating boot partition (kernel)", 80)
+		boot, err := images.Boot(ctx)
+		if err != nil {
+			return fmt.Errorf("fetch boot image: %w", err)
+		}
+		defer boot.Close()
+		// The boot partition is not A/B: this overwrites the kernel the
+		// device is currently running from, which is also what `gok update`
+		// does. Rolling back means installing an older release.
+		if err := target.StreamTo(ctx, "boot", boot); err != nil {
+			return fmt.Errorf("stream boot image: %w", err)
+		}
+	}
+
 	reportInstallProgress(progress, "switching", "Switching root partition", 90)
 	if err := target.Switch(ctx); err != nil {
 		return fmt.Errorf("switch root partition: %w", err)
@@ -101,11 +137,12 @@ func (i GokrazyInstaller) httpClient(baseURL string) *http.Client {
 
 // Options configures a Manager.
 type Options struct {
-	Owner       string
-	Repo        string
-	AssetName   string
-	APIURL      string
-	HistoryPath string
+	Owner         string
+	Repo          string
+	AssetName     string
+	BootAssetName string
+	APIURL        string
+	HistoryPath   string
 	// TokenPath is the file holding an optional GitHub API token.
 	// Defaults to DefaultTokenPath.
 	TokenPath string
@@ -119,12 +156,13 @@ type Options struct {
 }
 
 type Manager struct {
-	owner       string
-	repo        string
-	assetName   string
-	apiURL      string
-	historyPath string
-	tokenPath   string
+	owner         string
+	repo          string
+	assetName     string
+	bootAssetName string
+	apiURL        string
+	historyPath   string
+	tokenPath     string
 
 	httpClient *http.Client
 	password   PasswordFunc
@@ -188,6 +226,7 @@ func NewManager(opts Options) (*Manager, error) {
 	owner := valueDefault(opts.Owner, envDefault("OTA_GITHUB_OWNER", DefaultOwner))
 	repo := valueDefault(opts.Repo, envDefault("OTA_GITHUB_REPO", DefaultRepo))
 	asset := valueDefault(opts.AssetName, envDefault("OTA_RELEASE_ASSET", DefaultAssetName))
+	bootAsset := valueDefault(opts.BootAssetName, envDefault("OTA_BOOT_ASSET", DefaultBootAssetName))
 	api := valueDefault(opts.APIURL, envDefault("OTA_GITHUB_API_URL", DefaultGitHubAPIURL))
 	histPath := valueDefault(opts.HistoryPath, DefaultHistoryPath)
 	tokenPath := valueDefault(opts.TokenPath, envDefault("OTA_GITHUB_TOKEN_PATH", DefaultTokenPath))
@@ -203,6 +242,7 @@ func NewManager(opts Options) (*Manager, error) {
 		owner:          owner,
 		repo:           repo,
 		assetName:      asset,
+		bootAssetName:  bootAsset,
 		apiURL:         api,
 		historyPath:    histPath,
 		tokenPath:      tokenPath,
@@ -220,9 +260,10 @@ func NewManager(opts Options) (*Manager, error) {
 	return mgr, nil
 }
 
-func (m *Manager) Owner() string     { return m.owner }
-func (m *Manager) Repo() string      { return m.repo }
-func (m *Manager) AssetName() string { return m.assetName }
+func (m *Manager) Owner() string         { return m.owner }
+func (m *Manager) Repo() string          { return m.repo }
+func (m *Manager) AssetName() string     { return m.assetName }
+func (m *Manager) BootAssetName() string { return m.bootAssetName }
 
 func (m *Manager) Status() Status {
 	m.mu.Lock()
@@ -385,16 +426,78 @@ func (m *Manager) run(ctx context.Context, releaseTag string) {
 		TotalBytes:      asset.Size,
 	})
 
-	m.downloadAndInstall(ctx, asset.BrowserDownloadURL, asset.Size)
+	m.downloadAndInstall(ctx, asset.BrowserDownloadURL, asset.Size, m.bootFetcher(release))
+}
+
+// bootFetcher returns a function that downloads the release's boot image, or
+// nil when the release does not publish one — releases built before boot
+// images were added are still installable, they just leave the kernel alone.
+func (m *Manager) bootFetcher(release *Release) func(context.Context) (io.ReadCloser, error) {
+	if release == nil || m.bootAssetName == "" {
+		return nil
+	}
+	asset := findAsset(release.Assets, m.bootAssetName)
+	if asset == nil {
+		log.Printf("ota: release %s publishes no %s; leaving the boot partition (kernel) untouched",
+			release.TagName, m.bootAssetName)
+		return nil
+	}
+	url := asset.BrowserDownloadURL
+	return func(ctx context.Context) (io.ReadCloser, error) {
+		body, err := m.openDownload(ctx, url)
+		if err != nil {
+			return nil, err
+		}
+		gz, err := gzip.NewReader(body)
+		if err != nil {
+			body.Close()
+			return nil, fmt.Errorf("open gzip boot image: %w", err)
+		}
+		return gzipReadCloser{gz: gz, under: body}, nil
+	}
+}
+
+// gzipReadCloser closes both the gzip reader and the response body it wraps.
+type gzipReadCloser struct {
+	gz    *gzip.Reader
+	under io.ReadCloser
+}
+
+func (g gzipReadCloser) Read(p []byte) (int, error) { return g.gz.Read(p) }
+
+func (g gzipReadCloser) Close() error {
+	err := g.gz.Close()
+	if cerr := g.under.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // downloadAndInstall fetches downloadURL and streams it into the updater.
 // The caller is responsible for having set the "downloading" status first.
-func (m *Manager) downloadAndInstall(ctx context.Context, downloadURL string, expectedSize int64) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+func (m *Manager) downloadAndInstall(ctx context.Context, downloadURL string, expectedSize int64, boot func(context.Context) (io.ReadCloser, error)) {
+	body, err := m.openDownload(ctx, downloadURL)
 	if err != nil {
 		m.fail(err)
 		return
+	}
+	defer body.Close()
+
+	totalBytes := expectedSize
+	if totalBytes <= 0 {
+		if sized, ok := body.(interface{ Size() int64 }); ok {
+			totalBytes = sized.Size()
+		}
+	}
+	m.installStream(ctx, body, totalBytes, boot)
+}
+
+// openDownload issues the GET and returns the body, attaching the GitHub
+// token only for GitHub hosts so a redirect elsewhere never leaks it.
+func (m *Manager) openDownload(ctx context.Context, downloadURL string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return nil, err
 	}
 	if token := m.githubToken(); token != "" && isGitHubHost(downloadURL) {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -402,24 +505,24 @@ func (m *Manager) downloadAndInstall(ctx context.Context, downloadURL string, ex
 	req.Header.Set("User-Agent", userAgent)
 	resp, err := m.httpClient.Do(req)
 	if err != nil {
-		m.fail(fmt.Errorf("download OTA asset: %w", err))
-		return
+		return nil, fmt.Errorf("download OTA asset: %w", err)
 	}
-	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		m.fail(fmt.Errorf("download OTA asset: %s returned %s", downloadURL, resp.Status))
-		return
+		resp.Body.Close()
+		return nil, fmt.Errorf("download OTA asset: %s returned %s", downloadURL, resp.Status)
 	}
-
-	totalBytes := expectedSize
-	if totalBytes <= 0 && resp.ContentLength > 0 {
-		totalBytes = resp.ContentLength
-	}
-	m.installStream(ctx, resp.Body, totalBytes)
+	return sizedReadCloser{ReadCloser: resp.Body, size: resp.ContentLength}, nil
 }
 
+type sizedReadCloser struct {
+	io.ReadCloser
+	size int64
+}
+
+func (s sizedReadCloser) Size() int64 { return s.size }
+
 // installStream gunzips r and streams it into the gokrazy updater.
-func (m *Manager) installStream(ctx context.Context, r io.Reader, totalBytes int64) {
+func (m *Manager) installStream(ctx context.Context, r io.Reader, totalBytes int64, boot func(context.Context) (io.ReadCloser, error)) {
 	body := newDownloadProgressReader(r, totalBytes, m.updateDownloadProgress)
 
 	gz, err := gzip.NewReader(body)
@@ -434,7 +537,7 @@ func (m *Manager) installStream(ctx context.Context, r io.Reader, totalBytes int
 		Message:         "Downloading and flashing OTA image",
 		ProgressPercent: 10,
 	})
-	if err := m.resolveInstaller().InstallRoot(ctx, gz, m.updateInstallProgress); err != nil {
+	if err := m.resolveInstaller().Install(ctx, Images{Root: gz, Boot: boot}, m.updateInstallProgress); err != nil {
 		m.fail(err)
 		return
 	}
@@ -466,7 +569,16 @@ func (m *Manager) AvailableReleases(ctx context.Context) ([]Release, error) {
 			continue
 		}
 		if asset := findAsset(release.Assets, m.assetName); asset != nil {
-			release.Assets = []Asset{*asset}
+			// Narrow to the assets we install. The root image stays first:
+			// callers (and the web UI's size display) treat it as the
+			// release's headline asset. The boot image has to survive this
+			// filter or bootFetcher can never find it and the kernel is
+			// silently never updated.
+			kept := []Asset{*asset}
+			if boot := findAsset(release.Assets, m.bootAssetName); boot != nil {
+				kept = append(kept, *boot)
+			}
+			release.Assets = kept
 			filtered = append(filtered, release)
 		}
 	}

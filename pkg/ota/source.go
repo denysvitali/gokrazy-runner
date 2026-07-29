@@ -100,7 +100,8 @@ func (m *Manager) StartWithURL(ctx context.Context, rawURL string) (Status, erro
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Hour)
 	go func() {
 		defer cancel()
-		m.downloadAndInstall(runCtx, rawURL, 0)
+		// A URL-sourced image is a root filesystem only; no boot image.
+		m.downloadAndInstall(runCtx, rawURL, 0, nil)
 	}()
 	return status, nil
 }
@@ -139,7 +140,9 @@ func (m *Manager) StartWithFile(ctx context.Context, filePath, displayName strin
 		defer cancel()
 		defer os.Remove(filePath)
 		defer f.Close()
-		m.installStream(runCtx, f, size)
+		// An uploaded or URL-sourced image is a root filesystem only; there
+		// is no boot image to pair with it.
+		m.installStream(runCtx, f, size, nil)
 	}()
 	return status, nil
 }

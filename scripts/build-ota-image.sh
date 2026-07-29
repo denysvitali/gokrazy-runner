@@ -6,9 +6,13 @@ GOKRAZY_INSTANCE="${GOKRAZY_INSTANCE:-gokrazy-runner}"
 GOKRAZY_PARENT_DIR="${GOKRAZY_PARENT_DIR:-$HOME/.gokrazy/$GOKRAZY_INSTANCE}"
 IMAGE_DIR="${IMAGE_DIR:-$PWD/ota}"
 IMAGE_NAME="${IMAGE_NAME:-gokrazy-runner-rpi4b-root.squashfs}"
+# The kernel and device trees live in the boot partition, so an OTA that
+# ships only the root filesystem can never change the running kernel.
+BOOT_IMAGE_NAME="${BOOT_IMAGE_NAME:-gokrazy-runner-rpi4b-boot.fat}"
 GOKRAZY_IMAGE_MODE="${GOKRAZY_IMAGE_MODE:-ota}"
 TARGET_STORAGE_BYTES="${TARGET_STORAGE_BYTES:-}"
 IMAGE_PATH="${IMAGE_DIR}/${IMAGE_NAME}"
+BOOT_IMAGE_PATH="${IMAGE_DIR}/${BOOT_IMAGE_NAME}"
 MKE2FS_BINARY="${MKE2FS_BINARY:-}"
 WIFI_COUNTRY="${WIFI_COUNTRY:-CH}"
 # Pinned explicitly rather than left to gok's default: only kernel.rpi ships
@@ -165,7 +169,11 @@ EOF
 
 case "$GOKRAZY_IMAGE_MODE" in
   ota)
-    gok -i "$GOKRAZY_INSTANCE" overwrite --root "$IMAGE_PATH"
+    gok -i "$GOKRAZY_INSTANCE" overwrite --root "$IMAGE_PATH" --boot "$BOOT_IMAGE_PATH"
+    if [ ! -s "$BOOT_IMAGE_PATH" ]; then
+      echo "Error: expected boot image at $BOOT_IMAGE_PATH, but the file was not created"
+      exit 1
+    fi
     ;;
   full)
     if [ -z "$TARGET_STORAGE_BYTES" ]; then
@@ -186,6 +194,9 @@ esac
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   echo "image_path=$IMAGE_PATH" >> "$GITHUB_OUTPUT"
+  if [ "$GOKRAZY_IMAGE_MODE" = "ota" ]; then
+    echo "boot_image_path=$BOOT_IMAGE_PATH" >> "$GITHUB_OUTPUT"
+  fi
 fi
 
 echo "Built image: $IMAGE_PATH"

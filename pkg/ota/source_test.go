@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,7 +20,8 @@ type captureInstaller struct {
 	done chan []byte
 }
 
-func (c captureInstaller) InstallRoot(ctx context.Context, r io.Reader, _ InstallProgressFunc) error {
+func (c captureInstaller) Install(ctx context.Context, images Images, _ InstallProgressFunc) error {
+	r := images.Root
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return err
@@ -176,6 +178,7 @@ func TestStartWithURLInstalls(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("install did not run")
 	}
+	waitForInstallEnd(t, mgr)
 }
 
 func TestStartWithURLRejectsNonHTTP(t *testing.T) {
@@ -209,6 +212,7 @@ func TestStartWithFileInstallsAndRemovesSpool(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("install did not run")
 	}
+	waitForInstallEnd(t, mgr)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -224,7 +228,157 @@ func TestStartWithFileInstallsAndRemovesSpool(t *testing.T) {
 
 type fakeNoopInstaller struct{}
 
-func (fakeNoopInstaller) InstallRoot(ctx context.Context, r io.Reader, _ InstallProgressFunc) error {
+func (fakeNoopInstaller) Install(ctx context.Context, images Images, _ InstallProgressFunc) error {
+	r := images.Root
 	_, err := io.Copy(io.Discard, r)
 	return err
+}
+
+// recordingInstaller captures what was streamed to each partition.
+type recordingInstaller struct {
+	root string
+	boot string
+	err  error
+	done chan struct{}
+}
+
+func (r *recordingInstaller) Install(ctx context.Context, images Images, _ InstallProgressFunc) error {
+	defer close(r.done)
+	body, err := io.ReadAll(images.Root)
+	if err != nil {
+		return err
+	}
+	r.root = string(body)
+	if images.Boot != nil {
+		bootReader, err := images.Boot(ctx)
+		if err != nil {
+			r.err = err
+			return err
+		}
+		defer bootReader.Close()
+		bootBody, err := io.ReadAll(bootReader)
+		if err != nil {
+			return err
+		}
+		r.boot = string(bootBody)
+	}
+	return nil
+}
+
+// releaseServer serves a GitHub-shaped release listing plus its assets.
+func releaseServer(t *testing.T, withBoot bool) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/assets/root", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(gzipBytes(t, "ROOT-IMAGE"))
+	})
+	mux.HandleFunc("/assets/boot", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(gzipBytes(t, "BOOT-IMAGE"))
+	})
+	srv := httptest.NewServer(mux)
+	mux.HandleFunc("/repos/test-owner/test-repo/releases", func(w http.ResponseWriter, r *http.Request) {
+		assets := []map[string]any{
+			{"name": DefaultAssetName, "browser_download_url": srv.URL + "/assets/root", "size": 10},
+		}
+		if withBoot {
+			assets = append(assets, map[string]any{
+				"name": DefaultBootAssetName, "browser_download_url": srv.URL + "/assets/boot", "size": 10,
+			})
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"tag_name": "2026.1.1", "published_at": "2026-01-01T00:00:00Z", "assets": assets,
+		}})
+	})
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// waitForInstallEnd waits until the manager reaches a terminal state. The
+// install records history asynchronously after the installer returns, and
+// without this the test's TempDir cleanup races that write.
+func waitForInstallEnd(t *testing.T, mgr *Manager) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		switch mgr.Status().State {
+		case "installed", "failed":
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("install did not reach a terminal state; status=%+v", mgr.Status())
+}
+
+// TestInstallStreamsBootPartition is the regression test for a device that
+// installed a root filesystem containing /lib/modules/6.18.34-v8 while still
+// booting a 6.12.47-v8 kernel: the kernel lives in the boot partition, so an
+// update that streams only the root cannot change it.
+func TestInstallStreamsBootPartition(t *testing.T) {
+	srv := releaseServer(t, true)
+	inst := &recordingInstaller{done: make(chan struct{})}
+
+	mgr, err := NewManager(Options{
+		Owner:       "test-owner",
+		Repo:        "test-repo",
+		APIURL:      srv.URL,
+		Installer:   inst,
+		HistoryPath: filepath.Join(t.TempDir(), "history.json"),
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	st, err := mgr.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	select {
+	case <-inst.done:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("install never ran; status=%+v", mgr.Status())
+	}
+	_ = st
+	waitForInstallEnd(t, mgr)
+
+	if inst.root != "ROOT-IMAGE" {
+		t.Errorf("root = %q, want ROOT-IMAGE", inst.root)
+	}
+	if inst.boot != "BOOT-IMAGE" {
+		t.Errorf("boot = %q, want BOOT-IMAGE — the kernel would not be updated", inst.boot)
+	}
+}
+
+// TestInstallWithoutBootAsset covers releases published before boot images
+// existed: they must still install, leaving the kernel alone.
+func TestInstallWithoutBootAsset(t *testing.T) {
+	srv := releaseServer(t, false)
+	inst := &recordingInstaller{done: make(chan struct{})}
+
+	mgr, err := NewManager(Options{
+		Owner:       "test-owner",
+		Repo:        "test-repo",
+		APIURL:      srv.URL,
+		Installer:   inst,
+		HistoryPath: filepath.Join(t.TempDir(), "history.json"),
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	if _, err := mgr.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	select {
+	case <-inst.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("install never ran")
+	}
+	waitForInstallEnd(t, mgr)
+
+	if inst.root != "ROOT-IMAGE" {
+		t.Errorf("root = %q, want ROOT-IMAGE", inst.root)
+	}
+	if inst.boot != "" {
+		t.Errorf("boot = %q, want no boot stream", inst.boot)
+	}
 }

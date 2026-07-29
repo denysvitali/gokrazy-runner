@@ -42,6 +42,7 @@ jobs:
       GOKRAZY_TOOLS_REF: latest
       IMAGE_NAME_FULL: gokrazy-runner-rpi4b.img
       IMAGE_NAME_OTA: gokrazy-runner-rpi4b-root.squashfs
+      IMAGE_NAME_BOOT: gokrazy-runner-rpi4b-boot.fat
       TARGET_STORAGE_BYTES: "2147483648"  # 2 GiB
     steps:
       - uses: actions/checkout@v6
@@ -142,6 +143,13 @@ jobs:
           gzip -9 -c "${{ steps.build-full.outputs.image_path }}" > "$out"
           echo "compressed_path=$out" >> "$GITHUB_OUTPUT"
 
+      - name: Compress boot image
+        id: compress-boot
+        run: |
+          out="${{ steps.build-ota.outputs.boot_image_path }}.gz"
+          gzip -9 -c "${{ steps.build-ota.outputs.boot_image_path }}" > "$out"
+          echo "compressed_path=$out" >> "$GITHUB_OUTPUT"
+
       - name: Compress OTA image
         id: compress-ota
         run: |
@@ -163,6 +171,7 @@ jobs:
             ${{ steps.compress-full.outputs.compressed_path }}
             ${{ steps.build-ota.outputs.image_path }}
             ${{ steps.compress-ota.outputs.compressed_path }}
+            ${{ steps.compress-boot.outputs.compressed_path }}
           if-no-files-found: error
 
       - name: Publish release
@@ -176,3 +185,4 @@ jobs:
           files: |
             ${{ steps.compress-full.outputs.compressed_path }}
             ${{ steps.compress-ota.outputs.compressed_path }}
+            ${{ steps.compress-boot.outputs.compressed_path }}

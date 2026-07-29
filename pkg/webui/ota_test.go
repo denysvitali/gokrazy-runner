@@ -21,7 +21,8 @@ import (
 // loopback gokrazy /update/ endpoint.
 type fakeInstaller struct{}
 
-func (fakeInstaller) InstallRoot(ctx context.Context, r io.Reader, p ota.InstallProgressFunc) error {
+func (fakeInstaller) Install(ctx context.Context, images ota.Images, p ota.InstallProgressFunc) error {
+	r := images.Root
 	_, _ = io.Copy(io.Discard, r)
 	return nil
 }

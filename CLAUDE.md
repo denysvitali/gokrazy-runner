@@ -120,8 +120,20 @@ downloads the gzipped squashfs asset
 (`gokrazy-runner-rpi4b-root.squashfs.gz` by default), and streams it
 into the loopback gokrazy updater
 (`http://gokrazy:<password>@127.0.0.1/update/root`) using
-`github.com/gokrazy/updater`. After `StreamTo("root", ...)` it calls
-`Switch()` (flips the active partition) then `Reboot()`. The current
+`github.com/gokrazy/updater`. After `StreamTo("root", ...)` it streams the release's boot image to
+`StreamTo("boot", ...)`, then calls `Switch()` (flips the active
+partition) and `Reboot()`.
+
+**The boot image is not optional in practice.** The kernel and device
+trees live in the boot partition, so an update that ships only the root
+squashfs cannot change the running kernel: a device once installed a root
+containing `/lib/modules/6.18.34-v8` while still booting 6.12.47-v8, and
+therefore found no modules for itself. `AvailableReleases` narrows each
+release's asset list, and the boot asset has to survive that filter or
+`bootFetcher` silently finds nothing. The boot partition is *not* A/B —
+this overwrites the running kernel, same as `gok update` — so rolling back
+means installing an older release. Releases published before the boot
+asset existed still install; they just leave the kernel alone. The current
 gokrazy password is fetched via a `PasswordFunc` callback so the URL
 stays in sync with `/perm/gokr-pw.txt` after a password change.
 Install history persists at `/perm/ota-install-history.json` (capped

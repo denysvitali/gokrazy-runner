@@ -367,7 +367,10 @@ point a browser at `https://<device>:8443/`.
   replaced with `**redacted (N bytes)**` before being shown.
 - **Software update**: the **Software Update** card lists every GitHub
   release that ships an OTA squashfs and lets you install one with a
-  single click. The selected release is downloaded (gzipped squashfs),
+  single click. Each release also ships a boot image
+  (`gokrazy-runner-rpi4b-boot.fat.gz`) which is streamed to the boot
+  partition, because the kernel lives there — an update that replaced only
+  the root filesystem would leave the device on its old kernel. The selected release is downloaded (gzipped squashfs),
   streamed into the loopback gokrazy updater
   (`http://gokrazy:<pw>@127.0.0.1/update/root`), the partitions are
   switched, and the device reboots. Progress (download speed, percent,
