@@ -65,9 +65,26 @@ const (
 )
 
 // moduleOrder is load order, not alphabetical: brcmfmac depends on brcmutil,
-// and brcmfmac-wcc only exists on newer kernels. Every entry is best-effort:
-// a kernel with the driver built in has none of these files.
-var moduleOrder = []string{"brcmutil", "brcmfmac", "brcmfmac-wcc"}
+// and the -bca/-cyw/-wcc modules depend on brcmfmac.
+//
+// All three vendor modules are loaded, not just the one this board needs.
+// Since Linux 6.9 brcmfmac keeps its vendor-specific firmware glue in
+// separate "fwvid" modules and pulls the right one in with request_module()
+// at probe time — which shells out to /sbin/modprobe, and gokrazy has no
+// modprobe. The call fails, the probe never completes, and wlan0 never
+// appears even though brcmfmac itself loaded fine. Loading all three up
+// front means the one the chip asks for is already resident. The Pi 4's
+// CYW43455 wants brcmfmac-cyw.
+//
+// Every entry is best-effort: a kernel with the driver built in has none of
+// these files.
+var moduleOrder = []string{
+	"brcmutil",
+	"brcmfmac",
+	"brcmfmac-bca",
+	"brcmfmac-cyw",
+	"brcmfmac-wcc",
+}
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -137,6 +154,11 @@ func bringRadioUp(iface, country string, timeout time.Duration) error {
 	}
 
 	if err := waitForInterface(iface, timeout); err != nil {
+		// Without this the operator sees only "wlan0 never appeared" and has
+		// to find a shell to learn why. The kernel already knows: firmware
+		// that failed to load, an SDIO bus that never enumerated, or a
+		// missing fwvid module all say so in the ring buffer.
+		logKernelWiFiMessages()
 		return fmt.Errorf("%s never appeared: %w", iface, err)
 	}
 	log.Printf("wifi-init: %s is available", iface)
@@ -443,6 +465,55 @@ func findModule(name string) (string, error) {
 		return "", fmt.Errorf("module %q not found under %s", name, root)
 	}
 	return matches[0], nil
+}
+
+// wifiKmsgPatterns are the subsystems that explain a missing wlan0.
+var wifiKmsgPatterns = []string{"brcmfmac", "brcmutil", "mmc1", "sdio", "wlan", "cfg80211", "firmware"}
+
+// logKernelWiFiMessages echoes the Wi-Fi-related tail of /dev/kmsg. Best
+// effort by design: this runs on a path that already failed, and failing to
+// read the ring buffer must not mask the original error.
+func logKernelWiFiMessages() {
+	f, err := os.OpenFile("/dev/kmsg", os.O_RDONLY|unix.O_NONBLOCK, 0)
+	if err != nil {
+		log.Printf("wifi-init: cannot read /dev/kmsg for diagnostics: %v", err)
+		return
+	}
+	defer f.Close()
+
+	var matched []string
+	buf := make([]byte, 8192)
+	for len(matched) < 40 {
+		n, err := f.Read(buf)
+		if n > 0 {
+			line := string(buf[:n])
+			// kmsg records look like "<level>,<seq>,<usec>,-;<message>".
+			if i := strings.IndexByte(line, ';'); i >= 0 {
+				line = line[i+1:]
+			}
+			line = strings.TrimRight(line, "\n")
+			lower := strings.ToLower(line)
+			for _, pattern := range wifiKmsgPatterns {
+				if strings.Contains(lower, pattern) {
+					matched = append(matched, line)
+					break
+				}
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	if len(matched) == 0 {
+		log.Printf("wifi-init: the kernel logged nothing about brcmfmac, mmc or sdio — " +
+			"the radio may be disabled in config.txt or absent on this board")
+		return
+	}
+	log.Printf("wifi-init: kernel messages about the radio:")
+	for _, line := range matched {
+		log.Printf("wifi-init:   %s", line)
+	}
 }
 
 func kernelRelease() (string, error) {

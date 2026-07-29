@@ -173,6 +173,16 @@ modprobe, so `brcmutil` + `brcmfmac` are located under
 `/lib/modules/<uname -r>/` and loaded via `finit_module` by hand; without
 that, `wlan0` never exists on a kernel that ships them as modules.
 
+**All three `brcmfmac-{bca,cyw,wcc}` variants are loaded, not just the one
+the board needs.** Since Linux 6.9 brcmfmac keeps its vendor-specific
+firmware glue in separate "fwvid" modules and pulls the right one in with
+`request_module()` at probe time — which execs `/sbin/modprobe`, which
+gokrazy does not have. The call fails silently and the probe never
+completes, so the symptom is a `brcmfmac` that loads cleanly and a `wlan0`
+that never appears. The Pi 4's CYW43455 wants `brcmfmac-cyw`. When the
+interface still doesn't show up, wifi-init dumps the matching `/dev/kmsg`
+lines rather than making the operator find a shell.
+
 Wi-Fi needs the driver, the chip firmware, and something to load them.
 `github.com/gokrazy/wifi` already ships the firmware — its extra-files tar
 carries the whole `/lib/firmware/brcm/` set for the 43455 and 43430 plus

@@ -236,3 +236,50 @@ func TestFindModuleReportsMissingModuleTree(t *testing.T) {
 		t.Errorf("error = %q, want it to name the module or the missing tree", err)
 	}
 }
+
+// TestModuleOrderLoadsEveryVendorVariant pins the fix for a Pi 4 whose
+// brcmfmac loaded but never produced a wlan0. Since Linux 6.9 the core
+// driver pulls its vendor-specific glue in with request_module(), which
+// needs /sbin/modprobe — absent on gokrazy — so every variant has to be
+// loaded up front instead.
+func TestModuleOrderLoadsEveryVendorVariant(t *testing.T) {
+	want := []string{"brcmutil", "brcmfmac", "brcmfmac-bca", "brcmfmac-cyw", "brcmfmac-wcc"}
+	if len(moduleOrder) != len(want) {
+		t.Fatalf("moduleOrder = %v, want %v", moduleOrder, want)
+	}
+	for i, name := range want {
+		if moduleOrder[i] != name {
+			t.Errorf("moduleOrder[%d] = %q, want %q", i, moduleOrder[i], name)
+		}
+	}
+
+	// brcmutil must precede brcmfmac, and the vendor modules must follow it:
+	// each depends on the one before.
+	index := map[string]int{}
+	for i, name := range moduleOrder {
+		index[name] = i
+	}
+	if index["brcmutil"] > index["brcmfmac"] {
+		t.Error("brcmfmac depends on brcmutil and must load after it")
+	}
+	for _, vendor := range []string{"brcmfmac-bca", "brcmfmac-cyw", "brcmfmac-wcc"} {
+		if index[vendor] < index["brcmfmac"] {
+			t.Errorf("%s depends on brcmfmac and must load after it", vendor)
+		}
+	}
+}
+
+func TestLogKernelWiFiMessagesSurvivesMissingKmsg(t *testing.T) {
+	// Runs on the failure path, so it must never panic or block even when
+	// /dev/kmsg is unreadable (as in a test sandbox).
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		logKernelWiFiMessages()
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("logKernelWiFiMessages blocked")
+	}
+}
