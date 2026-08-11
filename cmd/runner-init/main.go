@@ -21,6 +21,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -366,18 +367,26 @@ func populateRunnerHome(ctx context.Context, image string, populated bool) error
 	} else {
 		log.Printf("seeding runner installation in %s from %s", dataDir, image)
 	}
-	args := []string{
+	args := buildPopulateRunnerHomeArgs(image)
+	cmd := exec.CommandContext(ctx, podmanBinary, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func buildPopulateRunnerHomeArgs(image string) []string {
+	return []string{
 		"run", "--rm",
 		"--user=0:0",
+		// Avoid Podman's default bridge, which asks netavark to configure
+		// nftables. gokrazy does not ship the nft executable, and this copy
+		// operation does not need isolated networking.
+		"--network=host",
 		"-v", dataDir + ":/runner-target",
 		"--entrypoint", "/bin/bash",
 		image,
 		"-c", "cp -a /home/runner/. /runner-target/",
 	}
-	cmd := exec.CommandContext(ctx, podmanBinary, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 // enableAutomaticUpdates migrates runners that were originally registered
@@ -394,8 +403,11 @@ func enableAutomaticUpdates(path string) (bool, error) {
 		return false, fmt.Errorf("read %s: %w", path, err)
 	}
 
+	// GitHub Runner writes its settings through .NET, which may prefix the JSON
+	// with a UTF-8 BOM. encoding/json intentionally rejects that prefix.
+	jsonBytes := bytes.TrimPrefix(b, []byte{0xef, 0xbb, 0xbf})
 	var settings map[string]json.RawMessage
-	if err := json.Unmarshal(b, &settings); err != nil {
+	if err := json.Unmarshal(jsonBytes, &settings); err != nil {
 		return false, fmt.Errorf("parse %s: %w", path, err)
 	}
 	raw, ok := settings["DisableUpdate"]

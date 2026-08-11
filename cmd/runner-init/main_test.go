@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -41,6 +42,13 @@ func TestRunnerHomePopulated(t *testing.T) {
 	}
 	if !runnerHomePopulated(dir) {
 		t.Fatal("config.sh file did not mark runner home as populated")
+	}
+}
+
+func TestPopulateRunnerHomeUsesHostNetwork(t *testing.T) {
+	args := buildPopulateRunnerHomeArgs("example.invalid/runner:latest")
+	if !slices.Contains(args, "--network=host") {
+		t.Fatalf("populate args must bypass Podman's nftables-backed default network: %q", args)
 	}
 }
 
@@ -118,7 +126,8 @@ func TestRefreshRunnerHomePolicy(t *testing.T) {
 func TestEnableAutomaticUpdates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".runner")
 	const original = `{"AgentId":9007199254740993,"AgentName":"pi","DisableUpdate":true}`
-	if err := os.WriteFile(path, []byte(original), 0o640); err != nil {
+	contents := append([]byte{0xef, 0xbb, 0xbf}, []byte(original)...)
+	if err := os.WriteFile(path, contents, 0o640); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.Stat(path)
