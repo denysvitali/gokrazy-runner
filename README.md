@@ -7,8 +7,9 @@ The runner itself is the official `actions/runner` (.NET, glibc-based), so it
 runs inside the upstream `ghcr.io/actions/actions-runner` container — gokrazy
 provides a minimal Go userspace, the container provides the runner's runtime
 dependencies. A small Go init binary (`runner-init`) reads configuration
-from `/perm`, pulls the container image, and supervises it (driving
-`config.sh` once for registration, then `run.sh` for every boot).
+from `/perm`, pulls the container image, refreshes the persisted runner
+installation from it, and supervises the runner (driving `config.sh` once for
+registration, then `run.sh` for every boot).
 
 Designed for **Raspberry Pi 4 / arm64**. Other arm64 SBCs work with a
 different kernel package set.
@@ -180,7 +181,7 @@ URL=https://github.com/<owner>/<repo>      # or https://github.com/<org>
 NAME=my-pi4-runner
 LABELS=self-hosted,linux,arm64,gokrazy
 # Optional override:
-# IMAGE=ghcr.io/actions/actions-runner:2.319.0  # pin to a specific version
+# IMAGE=ghcr.io/my-org/actions-runner:latest  # use a custom runner image
 ```
 
 ```bash
@@ -191,7 +192,13 @@ LABELS=self-hosted,linux,arm64,gokrazy
 `runner-init` polls `/perm/runner.env` every 10s, so it will pick up the
 new files within seconds — no reboot needed. The runner's `_work` directory
 and registered identity persist in `/perm/runner-data` across reboots, so
-the registration token only needs to be supplied once.
+the registration token only needs to be supplied once. Each container start
+pulls `IMAGE` and refreshes the runner distribution in that persistent
+directory, while retaining `.runner`, credentials, diagnostics, and job data.
+The runner's own automatic updater remains enabled as well, so a long-running
+listener can update without waiting for a container restart. If a pull fails
+transiently, an existing installation is left untouched and used until the
+next retry.
 
 ## Wi-Fi
 

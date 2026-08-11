@@ -6,8 +6,9 @@
 //   - /perm/runner.env     KEY=VALUE pairs (URL, NAME, LABELS, IMAGE, ...)
 //   - /perm/runner.token   one-shot GitHub registration token (chmod 0600)
 //
-// On boot it waits for /perm to be available, optionally pulls the runner
-// image, and runs the official ghcr.io/actions/actions-runner container via
+// On boot it waits for /perm to be available, pulls the runner image, refreshes
+// the persisted runner binaries from it, and runs the official
+// ghcr.io/actions/actions-runner container via
 // `podman run`. The official image's entrypoint is overridden with a small
 // bash bootstrap that runs config.sh on first boot (passing the registration
 // token) and then run.sh; on subsequent boots the persisted .runner config
@@ -21,6 +22,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -82,7 +84,7 @@ if [ ! -f .runner ]; then
     --name "$RUNNER_NAME" \
     --labels "$LABELS" \
     --work "_work" \
-    --unattended --replace --disableupdate
+    --unattended --replace
 fi
 exec ./run.sh
 `
@@ -156,12 +158,16 @@ func runOnce(ctx context.Context) error {
 	rm.Stderr = os.Stderr
 	_ = rm.Run()
 
-	if err := pullImage(ctx, cfg.Image); err != nil {
-		log.Printf("warning: pull %s failed (will try to run from local cache): %v", cfg.Image, err)
+	if err := refreshRunnerHome(ctx, cfg.Image); err != nil {
+		return err
 	}
 
-	if err := populateRunnerHome(ctx, cfg.Image); err != nil {
-		return fmt.Errorf("populate %s from image: %w", dataDir, err)
+	changed, err := enableAutomaticUpdates(filepath.Join(dataDir, ".runner"))
+	if err != nil {
+		return fmt.Errorf("enable automatic runner updates: %w", err)
+	}
+	if changed {
+		log.Printf("enabled automatic runner updates in %s", filepath.Join(dataDir, ".runner"))
 	}
 
 	args := buildPodmanArgs(cfg)
@@ -229,10 +235,10 @@ func loadConfig() (*config, error) {
 	reserved := map[string]bool{
 		"URL": true, "REPO_URL": true,
 		"NAME": true, "RUNNER_NAME": true,
-		"LABELS":          true,
-		"IMAGE":           true,
-		"RUNNER_IMAGE":    true,
-		"RUNNER_TOKEN":    true,
+		"LABELS":       true,
+		"IMAGE":        true,
+		"RUNNER_IMAGE": true,
+		"RUNNER_TOKEN": true,
 	}
 	var extra []string
 	for k, v := range env {
@@ -308,18 +314,58 @@ func pullImage(ctx context.Context, image string) error {
 	return cmd.Run()
 }
 
-// populateRunnerHome seeds /perm/runner-data with the runner binaries from
-// the image (config.sh, run.sh, bin/, externals/, ...). The main `podman run`
-// bind-mounts dataDir over /home/runner, which would otherwise shadow the
-// binaries baked into the image. We do a one-shot copy as root inside a
-// throwaway container; cp -a preserves the image's runner:runner ownership
-// (UID 1001), which lines up with the host because the container runs without
-// a user-namespace remap.
-func populateRunnerHome(ctx context.Context, image string) error {
-	if _, err := os.Stat(filepath.Join(dataDir, "config.sh")); err == nil {
+// refreshRunnerHome pulls image and refreshes the persisted runner installation
+// when the pull succeeds. If the registry is temporarily unavailable, an
+// existing installation is left untouched; on first boot we still try the
+// locally cached image so the appliance can start without registry access.
+func refreshRunnerHome(ctx context.Context, image string) error {
+	return refreshRunnerHomeWith(ctx, image, pullImage, runnerHomePopulated, populateRunnerHome)
+}
+
+// refreshRunnerHomeWith exposes the refresh operations as parameters so the
+// success and offline-fallback policy can be tested without invoking podman.
+func refreshRunnerHomeWith(
+	ctx context.Context,
+	image string,
+	pull func(context.Context, string) error,
+	isPopulated func(string) bool,
+	populate func(context.Context, string, bool) error,
+) error {
+	pullErr := pull(ctx, image)
+	populated := isPopulated(dataDir)
+	if pullErr != nil && populated {
+		log.Printf("warning: pull %s failed; keeping existing runner installation: %v", image, pullErr)
 		return nil
 	}
-	log.Printf("seeding %s from %s (first boot)", dataDir, image)
+	if pullErr != nil {
+		log.Printf("warning: pull %s failed; trying the local image cache: %v", image, pullErr)
+	}
+
+	if err := populate(ctx, image, populated); err != nil {
+		return fmt.Errorf("populate %s from image: %w", dataDir, err)
+	}
+	return nil
+}
+
+func runnerHomePopulated(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, "config.sh"))
+	return err == nil && !info.IsDir()
+}
+
+// populateRunnerHome copies the runner distribution (config.sh, run.sh, bin/,
+// externals/, ...) from image into /perm/runner-data. The main `podman run`
+// bind-mounts dataDir over /home/runner, which would otherwise shadow every
+// newly pulled binary. Copying on each successful pull updates the distribution
+// while retaining files that only exist in the persistent directory, notably
+// .runner, .credentials, _diag/, and _work/. The copy runs as root; cp -a
+// preserves the image's runner:runner ownership (UID 1001), which lines up with
+// the host because the container runs without a user-namespace remap.
+func populateRunnerHome(ctx context.Context, image string, populated bool) error {
+	if populated {
+		log.Printf("refreshing runner installation in %s from %s", dataDir, image)
+	} else {
+		log.Printf("seeding runner installation in %s from %s", dataDir, image)
+	}
 	args := []string{
 		"run", "--rm",
 		"--user=0:0",
@@ -332,6 +378,92 @@ func populateRunnerHome(ctx context.Context, image string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// enableAutomaticUpdates migrates runners that were originally registered
+// with --disableupdate. RunnerSettings is stored as JSON in .runner; changing
+// the local setting makes the listener advertise disableUpdate=false on its
+// next broker request, allowing GitHub to deliver runner updates. RawMessage
+// preserves every unrelated value losslessly, including large numeric IDs.
+func enableAutomaticUpdates(path string) (bool, error) {
+	b, err := os.ReadFile(path) // #nosec G304 -- caller supplies the fixed .runner path
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	var settings map[string]json.RawMessage
+	if err := json.Unmarshal(b, &settings); err != nil {
+		return false, fmt.Errorf("parse %s: %w", path, err)
+	}
+	raw, ok := settings["DisableUpdate"]
+	if !ok {
+		return false, nil
+	}
+	var disabled bool
+	if err := json.Unmarshal(raw, &disabled); err != nil {
+		return false, fmt.Errorf("parse DisableUpdate in %s: %w", path, err)
+	}
+	if !disabled {
+		return false, nil
+	}
+
+	settings["DisableUpdate"] = json.RawMessage("false")
+	updated, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return false, fmt.Errorf("encode %s: %w", path, err)
+	}
+	updated = append(updated, '\n')
+	if err := replaceFile(path, updated); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// replaceFile atomically rewrites path while preserving its permissions and
+// ownership. Ownership matters because runner-init is root but the container
+// reads and later updates .runner as UID/GID 1001.
+func replaceFile(path string, contents []byte) (retErr error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".runner-update-*")
+	if err != nil {
+		return fmt.Errorf("create temporary runner settings: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		_ = tmp.Close()
+		if retErr != nil {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		return fmt.Errorf("chmod temporary runner settings: %w", err)
+	}
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		if err := tmp.Chown(int(stat.Uid), int(stat.Gid)); err != nil {
+			return fmt.Errorf("chown temporary runner settings: %w", err)
+		}
+	}
+	if _, err := tmp.Write(contents); err != nil {
+		return fmt.Errorf("write temporary runner settings: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("sync temporary runner settings: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temporary runner settings: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace %s: %w", path, err)
+	}
+	return nil
 }
 
 // ensureRuntimeDirs creates directories podman expects on a stock filesystem

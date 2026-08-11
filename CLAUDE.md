@@ -56,14 +56,20 @@ atomically via temp-file + rename so the symlink is replaced with a
 real file, mirroring `gokrazy/dhcp`'s use of `renameio`. Then waits for `/perm/runner.env`
 to exist, then loops: parse the env file, read `/perm/runner.token` (a
 GitHub *registration* token, not a PAT), `podman rm -f` any stale
-container, `podman pull`, then `podman run` with these key flags:
+container, `podman pull`, refresh the runner distribution in the persistent
+home from the pulled image, migrate old `.runner` files away from
+`DisableUpdate: true`, then `podman run` with these key flags:
 `--privileged --network=host -v /perm/runner-data:/home/runner
 --entrypoint /bin/bash <image> -c <bootstrap>`. The inline `bootstrap`
-const calls `./config.sh --unattended --replace --disableupdate` only when
-no `.runner` config is present in the persisted volume, then exec's
-`./run.sh`. Crash → exponential backoff `5s..2min` → reload config and
-retry. Reserved env keys (URL/REPO_URL, NAME/RUNNER_NAME, LABELS,
-IMAGE/RUNNER_IMAGE) are consumed by runner-init; everything else in
+const calls `./config.sh --unattended --replace` only when no `.runner`
+config is present in the persisted volume, then exec's `./run.sh`. Automatic
+runner updates must remain enabled: the image pull + refresh repairs obsolete
+installations on startup, while GitHub's updater keeps a long-lived listener
+current between restarts. A failed pull retains an existing runner home rather
+than copying a stale cached image over it; only an empty first boot falls back
+to seeding from the local cache. Crash → exponential backoff `5s..2min` →
+reload config and retry. Reserved env keys (URL/REPO_URL, NAME/RUNNER_NAME,
+LABELS, IMAGE/RUNNER_IMAGE) are consumed by runner-init; everything else in
 `runner.env` is passed through to the container as `-e KEY=VALUE`.
 
 **`cmd/runner-webui` — long-lived web UI service.** Vanilla `net/http`
